@@ -1,0 +1,77 @@
+# Rendered by docker/entrypoint.sh into an ephemeral dir at container start.
+# Placeholders: __LISTEN_PORT__, __MAX_UPLOAD__, __RUNDIR__
+# The /api upstream (and its Authorization header) is written separately to
+# __RUNDIR__/proxy-upstream.conf so no URL or token is ever sed-escaped.
+
+worker_processes auto;
+pid __RUNDIR__/nginx.pid;
+error_log /dev/stderr warn;
+
+events {
+	worker_connections 1024;
+}
+
+http {
+	include /etc/nginx/mime.types;
+	default_type application/octet-stream;
+
+	access_log /dev/stdout;
+
+	client_body_temp_path __RUNDIR__/client_body;
+	proxy_temp_path __RUNDIR__/proxy;
+	fastcgi_temp_path __RUNDIR__/fastcgi;
+	uwsgi_temp_path __RUNDIR__/uwsgi;
+	scgi_temp_path __RUNDIR__/scgi;
+
+	sendfile on;
+	tcp_nopush on;
+	server_tokens off;
+
+	gzip on;
+	gzip_types text/css application/javascript application/json image/svg+xml;
+	gzip_min_length 1024;
+
+	server {
+		listen __LISTEN_PORT__;
+		server_name _;
+		root /usr/share/nginx/html;
+		index index.html;
+
+		# Binaries go up this path, so the 1m default is useless here.
+		client_max_body_size __MAX_UPLOAD__;
+
+		# Hashed bundle files are immutable; index.html must never be cached or
+		# a redeploy serves a stale app shell.
+		location /_app/immutable/ {
+			expires 1y;
+			add_header Cache-Control "public, immutable";
+		}
+
+		location = /index.html {
+			add_header Cache-Control "no-store";
+		}
+
+		# The browser's only server contact. Token injection happens here, in
+		# the proxy, never in the bundle.
+		location /api/ {
+			include __RUNDIR__/proxy-upstream.conf;
+
+			proxy_http_version 1.1;
+			proxy_set_header Host $host;
+			proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+			proxy_set_header X-Forwarded-Proto $scheme;
+
+			# analyzeHeadless submissions are slow and large: stream them
+			# through rather than buffering the whole upload to disk first.
+			proxy_request_buffering off;
+			proxy_connect_timeout 10s;
+			proxy_send_timeout 300s;
+			proxy_read_timeout 300s;
+		}
+
+		# SPA fallback: client-side routes like /j/<id> are not files.
+		location / {
+			try_files $uri $uri/ /index.html;
+		}
+	}
+}

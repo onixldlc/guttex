@@ -1,0 +1,284 @@
+/* Palette lifted from Cutter's dark theme: blue-grey panels, lighter dock
+   headers, one strong selection blue, Ghidra-ish listing colours. */
+
+:root {
+	--bg: #282c34;
+	--bg-panel: #2b3038;
+	--bg-head: #343a44;
+	--bg-elev: #3b414d;
+	--bg-input: #21252b;
+
+	--border: #454c59;
+	--border-soft: #363c47;
+
+	--fg: #c8ccd4;
+	--fg-dim: #8d93a1;
+	--fg-faint: #6b7280;
+
+	--accent: #5294e2;
+	--accent-dim: #4b6eaf;
+	--row-hover: #323844;
+	--row-sel: #4b6eaf;
+
+	--ok: #8fbf7f;
+	--warn: #e5a663;
+	--err: #e06c75;
+
+	/* listing syntax */
+	--syn-addr: #7f8c9b;
+	--syn-key: #d9a05b;
+	--syn-type: #5294e2;
+	--syn-num: #cf8e6d;
+	--syn-str: #e08b5c;
+	--syn-com: #8fbf7f;
+	--syn-fn: #61a0e8;
+	--syn-punct: #abb2bf;
+
+	--scroll-thumb: #4a5262;
+	--scroll-thumb-hover: #5b6478;
+
+	--mono: ui-monospace, 'JetBrains Mono', 'Fira Code', 'DejaVu Sans Mono', Menlo, Consolas,
+		monospace;
+	--ui: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+
+	--row-h: 22px;
+	--head-h: 34px;
+
+	color-scheme: dark;
+}
+
+* {
+	box-sizing: border-box;
+}
+
+html,
+body {
+	height: 100%;
+	margin: 0;
+}
+
+body {
+	background: var(--bg);
+	color: var(--fg);
+	font-family: var(--ui);
+	font-size: 13px;
+	overflow: hidden;
+}
+
+a {
+	color: var(--accent);
+	text-decoration: none;
+}
+a:hover {
+	text-decoration: underline;
+}
+
+/* ---- scrollbars: thin, Qt-ish ---- */
+/* wide enough to grab the thumb with a mouse, not a hairline */
+*::-webkit-scrollbar {
+	width: 14px;
+	height: 14px;
+}
+*::-webkit-scrollbar-track {
+	background: var(--bg);
+}
+*::-webkit-scrollbar-thumb {
+	background: var(--scroll-thumb);
+	border: 3px solid var(--bg);
+	border-radius: 7px;
+	min-height: 40px;
+}
+*::-webkit-scrollbar-thumb:hover {
+	background: var(--scroll-thumb-hover);
+}
+* {
+	scrollbar-width: auto;
+	scrollbar-color: var(--scroll-thumb) var(--bg);
+}
+
+/* ---- primitives ---- */
+.panel {
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	min-width: 0;
+	background: var(--bg-panel);
+	border: 1px solid var(--border);
+}
+
+.panel-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	height: var(--head-h);
+	flex: 0 0 var(--head-h);
+	padding: 0 8px;
+	background: var(--bg-head);
+	border-bottom: 1px solid var(--border);
+	font-size: 12px;
+	color: var(--fg-dim);
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+	user-select: none;
+}
+
+.panel-body {
+	flex: 1 1 auto;
+	min-height: 0;
+	overflow: auto;
+}
+
+.spacer {
+	flex: 1 1 auto;
+}
+
+button,
+.btn {
+	font: inherit;
+	color: var(--fg);
+	background: var(--bg-elev);
+	border: 1px solid var(--border);
+	border-radius: 3px;
+	padding: 3px 9px;
+	cursor: pointer;
+	line-height: 1.5;
+}
+button:hover:not(:disabled),
+.btn:hover {
+	background: #454c59;
+	border-color: #566073;
+}
+button:disabled {
+	opacity: 0.45;
+	cursor: default;
+}
+button.primary {
+	background: var(--accent-dim);
+	border-color: var(--accent);
+}
+button.primary:hover:not(:disabled) {
+	background: var(--accent);
+}
+button.flat {
+	background: transparent;
+	border-color: transparent;
+}
+button.flat:hover:not(:disabled) {
+	background: var(--bg-elev);
+	border-color: var(--border);
+}
+
+input,
+select {
+	font: inherit;
+	color: var(--fg);
+	background: var(--bg-input);
+	border: 1px solid var(--border);
+	border-radius: 3px;
+	padding: 3px 7px;
+}
+input:focus,
+select:focus {
+	outline: none;
+	border-color: var(--accent);
+}
+input::placeholder {
+	color: var(--fg-faint);
+}
+
+.mono {
+	font-family: var(--mono);
+	font-size: 12px;
+}
+.addr {
+	font-family: var(--mono);
+	font-size: 12px;
+	color: var(--syn-addr);
+}
+.dim {
+	color: var(--fg-dim);
+}
+.err {
+	color: var(--err);
+}
+
+/* ---- dense tables (the Cutter list docks) ---- */
+table.list {
+	width: 100%;
+	border-collapse: collapse;
+	font-family: var(--mono);
+	font-size: 12px;
+}
+table.list thead th {
+	position: sticky;
+	top: 0;
+	z-index: 1;
+	background: var(--bg-head);
+	border-bottom: 1px solid var(--border);
+	padding: 4px 8px;
+	text-align: left;
+	font-weight: 500;
+	color: var(--fg-dim);
+	white-space: nowrap;
+	font-family: var(--ui);
+	font-size: 11px;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+}
+table.list tbody tr {
+	height: var(--row-h);
+	cursor: default;
+	border-bottom: 1px solid var(--border-soft);
+}
+table.list tbody tr:hover {
+	background: var(--row-hover);
+}
+table.list tbody tr[aria-selected='true'] {
+	background: var(--accent-dim);
+	color: #fff;
+}
+table.list td {
+	padding: 0 8px;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	max-width: 0;
+}
+table.list td.shrink {
+	width: 1%;
+	max-width: none;
+}
+
+.badge {
+	display: inline-block;
+	padding: 0 5px;
+	border-radius: 3px;
+	background: var(--bg-elev);
+	border: 1px solid var(--border);
+	font-size: 11px;
+	font-family: var(--mono);
+	color: var(--fg-dim);
+}
+.badge.queued {
+	color: var(--fg-dim);
+}
+.badge.running {
+	color: var(--accent);
+	border-color: var(--accent-dim);
+}
+.badge.done {
+	color: var(--ok);
+	border-color: #4d6b42;
+}
+.badge.failed,
+.badge.canceled {
+	color: var(--err);
+	border-color: #79383e;
+}
+
+.empty {
+	padding: 24px;
+	text-align: center;
+	color: var(--fg-faint);
+	font-size: 12px;
+}
