@@ -1,11 +1,13 @@
 <script lang="ts">
 	import '../app.css';
+	import Notices from '$components/Notices.svelte';
 	let { children } = $props();
 </script>
 
 <div class="app">
 	{@render children()}
 </div>
+<Notices />
 
 <style>
 	.app {

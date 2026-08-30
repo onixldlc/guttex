@@ -1,18 +1,27 @@
 // Workbench state shared by the docks. One binary open at a time, exactly like
 // Cutter: the sidebar picks an address, everything else follows it.
 
+import { goto } from '$app/navigation';
 import { api, ApiError } from '$lib/api/client';
 import type { FunctionEntry, Job, Summary } from '$lib/api/types';
 import { normAddr } from '$lib/format';
 
-export type CenterTab = 'disasm' | 'decompiler' | 'hex' | 'info';
+// `plugin:<pluginId>/<panelId>` tabs come from installed plugins.
+export type CenterTab =
+	| 'disasm'
+	| 'graph'
+	| 'decompiler'
+	| 'hex'
+	| 'callgraph'
+	| 'info'
+	| `plugin:${string}`;
 
 class Session {
 	id = $state('');
 	job = $state<Job | null>(null);
 	summary = $state<Summary | null>(null);
 
-	/** normalised address currently selected in any dock */
+	/** normalised address currently selected in any dock; mirrors `?a=` */
 	addr = $state('');
 	fn = $state<FunctionEntry | null>(null);
 	fnError = $state('');
@@ -35,6 +44,13 @@ class Session {
 	}
 
 	async open(id: string) {
+		if (this.id === id && this.job) {
+			// Already open. Selecting an address renavigates the route, so this must
+			// not refetch -- but the route's cleanup stopped the poller, so an
+			// unfinished job needs it back.
+			if (this.job.status === 'queued' || this.job.status === 'running') this.watch();
+			return;
+		}
 		if (this.id !== id) this.reset();
 		this.id = id;
 		this.loading = true;
@@ -92,14 +108,28 @@ class Session {
 		}
 	}
 
-	/** every dock navigates through here */
+	/**
+	 * Every dock navigates through here. Selection lives in the URL (`?a=`), so
+	 * the browser's own history *is* the address history -- back/forward, thumb
+	 * buttons and Alt+Arrow all traverse visited functions for free. Chromium on
+	 * Linux never delivers the thumb buttons to the page, so intercepting the
+	 * mouse events could not have worked.
+	 */
 	async select(addr: string, tab?: CenterTab) {
 		const a = normAddr(addr);
 		if (!a) return;
-		this.addr = a;
 		if (tab) this.tab = tab;
+		if (a === this.addr) return; // no dupe entries for re-clicking the same row
+		await goto(`?a=${encodeURIComponent(a)}`, { keepFocus: true, noScroll: true });
+	}
+
+	/** apply what the URL says; called by the route when `?a=` changes */
+	async show(addr: string) {
+		const a = normAddr(addr);
+		this.addr = a;
 		this.fn = null;
 		this.fnError = '';
+		if (!a) return;
 		try {
 			this.fn = await api.fn(this.id, a);
 		} catch (e) {

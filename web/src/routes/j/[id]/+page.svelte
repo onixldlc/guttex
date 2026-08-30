@@ -7,14 +7,22 @@
 	import SideDock from '$components/SideDock.svelte';
 	import XrefsPanel from '$components/XrefsPanel.svelte';
 	import Disassembly from '$components/Disassembly.svelte';
+	import FunctionGraph from '$components/FunctionGraph.svelte';
 	import Decompiler from '$components/Decompiler.svelte';
 	import HexView from '$components/HexView.svelte';
+	import CallGraph from '$components/CallGraph.svelte';
 	import InfoPanel from '$components/InfoPanel.svelte';
 	import ConsolePanel from '$components/ConsolePanel.svelte';
 	import StatusBar from '$components/StatusBar.svelte';
 	import Splitter from '$components/Splitter.svelte';
 	import TabStrip from '$components/TabStrip.svelte';
+	import PluginPanel from '$components/PluginPanel.svelte';
+	import ActionsMenu from '$components/ActionsMenu.svelte';
+	import ContextMenu from '$components/ContextMenu.svelte';
+	import { plugins } from '$lib/plugins/host.svelte';
 	import type { Tab } from '$components/tabs';
+	import { untrack } from 'svelte';
+	import { normAddr } from '$lib/format';
 
 	let leftW = $state(340);
 	let rightW = $state(300);
@@ -26,12 +34,28 @@
 		return () => session.stop();
 	});
 
-	const tabs: Tab[] = [
+	// Selection rides in `?a=`, so the browser's own history is the address
+	// history: back/forward, thumb buttons and Alt+Arrow all traverse it.
+	$effect(() => {
+		const a = normAddr(page.url.searchParams.get('a') ?? '');
+		if (!session.id) return;
+		untrack(() => {
+			if (a !== session.addr) session.show(a);
+		});
+	});
+
+	$effect(() => plugins.init());
+
+	// Plugin panels are tabs like any other, appended after the built-ins.
+	let tabs = $derived<Tab[]>([
 		{ id: 'disasm', label: 'disassembly' },
+		{ id: 'graph', label: 'graph' },
 		{ id: 'decompiler', label: 'decompiler' },
 		{ id: 'hex', label: 'hexdump' },
-		{ id: 'info', label: 'info' }
-	];
+		{ id: 'callgraph', label: 'call graph' },
+		{ id: 'info', label: 'info' },
+		...plugins.panels.map((p) => ({ id: p.key, label: p.label }))
+	]);
 </script>
 
 <TitleBar />
@@ -50,16 +74,23 @@
 			{#if session.job && session.job.status !== 'done'}
 				<span class="dim note">results appear when analysis finishes</span>
 			{/if}
+			<ActionsMenu />
 		</div>
 
 		{#if session.tab === 'disasm'}
 			<Disassembly />
+		{:else if session.tab === 'graph'}
+			<FunctionGraph />
+		{:else if session.tab === 'callgraph'}
+			<CallGraph />
 		{:else if session.tab === 'decompiler'}
 			<Decompiler />
 		{:else if session.tab === 'hex'}
 			<HexView />
-		{:else}
+		{:else if session.tab === 'info'}
 			<InfoPanel />
+		{:else}
+			<PluginPanel tab={session.tab} />
 		{/if}
 	</div>
 
@@ -73,6 +104,7 @@
 {/if}
 
 <StatusBar />
+<ContextMenu />
 
 <style>
 	.body {

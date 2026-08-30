@@ -4,6 +4,7 @@
 	import { api } from '$lib/api/client';
 	import type { Capabilities, Job, JobOptions } from '$lib/api/types';
 	import { fmtBytes, fmtDuration, relTime, shortId } from '$lib/format';
+	import PluginsPanel from '$components/PluginsPanel.svelte';
 
 	let jobs = $state<Job[]>([]);
 	let caps = $state<Capabilities | null>(null);
@@ -127,6 +128,8 @@
 	</div>
 
 	{#if error}<p class="err line">{error}</p>{/if}
+
+	<PluginsPanel />
 
 	<section class="panel jobs">
 		<div class="panel-head">

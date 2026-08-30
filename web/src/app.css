@@ -19,6 +19,15 @@
 	--accent-dim: #4b6eaf;
 	--row-hover: #323844;
 	--row-sel: #4b6eaf;
+	/* backing for a multi-line text selection in the listing */
+	--row-range: rgba(82, 148, 226, 0.22);
+
+	/* Graph flow edges. Green/red for the two sides of a conditional is the
+	   one convention Ghidra, Cutter and IDA all share -- keep it. */
+	--edge-true: #4ec94e;
+	--edge-false: #e05252;
+	--edge-jump: #5294e2;
+	--edge-next: #8b98a8;
 
 	--ok: #8fbf7f;
 	--warn: #e5a663;
@@ -33,6 +42,36 @@
 	--syn-com: #8fbf7f;
 	--syn-fn: #61a0e8;
 	--syn-punct: #abb2bf;
+	/* Listing palette. These are rizin's `ec` colour keys (librz/cons/pal.c)
+	   carrying the values of the `ayu` theme, which is Cutter's
+	   defaultDarkColorTheme -- so the disassembly reads the way Cutter's does:
+	   the mnemonic's colour is its analysis op type, not a text pattern. */
+	--ec-offset: #ed9366;
+	--ec-b0x00: #738699;
+	--ec-b0xff: #abb0b6;
+	--ec-mov: #d9d8d7;
+	--ec-math: #55ddee;
+	--ec-bin: #55ddee;
+	--ec-cmp: #55ddee;
+	--ec-push: #55ddee;
+	--ec-pop: #55ddee;
+	--ec-jmp: #c2d94c;
+	--ec-cjmp: #c2d94c;
+	--ec-ujmp: #c2d94c;
+	--ec-call: #ff7733;
+	--ec-ucall: #5ccfe6;
+	--ec-ret: #dd6666;
+	--ec-trap: #dd6666;
+	--ec-swi: #dd6666;
+	--ec-nop: #a37acc;
+	--ec-reg: #e6e1cf;
+	--ec-creg: #ff7733;
+	--ec-num: #f28779;
+	--ec-flag: #5ccfe6;
+	--ec-fname: #ff6a00;
+	--ec-comment: #95e6cb;
+	--ec-flow: #c2d94c;
+	--ec-other: #888888;
 
 	--scroll-thumb: #4a5262;
 	--scroll-thumb-hover: #5b6478;

@@ -144,6 +144,8 @@
 				<tbody>
 					{#each view as r, i (addrOf(r) + ':' + i)}
 						<tr
+							data-addr={addrOf(r)}
+							data-name={String(r.name ?? '')}
 							aria-selected={!!addrOf(r) && displayAddr(addrOf(r)) === displayAddr(session.addr)}
 							ondblclick={() => session.select(addrOf(r), 'decompiler')}
 							onclick={() => session.select(addrOf(r))}

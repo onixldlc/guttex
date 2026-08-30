@@ -74,7 +74,12 @@
 					<ul class="links">
 						{#each fn.calls as c (c.address + c.name)}
 							<li>
-								<button class="flat" onclick={() => session.select(c.address, 'decompiler')}>
+								<button
+									class="flat"
+									data-addr={c.address}
+									data-name={c.name}
+									onclick={() => session.select(c.address, 'decompiler')}
+								>
 									<span class="addr">{displayAddr(c.address)}</span>{c.name}
 								</button>
 							</li>
@@ -87,7 +92,12 @@
 					<ul class="links">
 						{#each fn.called_by as c (c.address + c.name)}
 							<li>
-								<button class="flat" onclick={() => session.select(c.address, 'decompiler')}>
+								<button
+									class="flat"
+									data-addr={c.address}
+									data-name={c.name}
+									onclick={() => session.select(c.address, 'decompiler')}
+								>
 									<span class="addr">{displayAddr(c.address)}</span>{c.name}
 								</button>
 							</li>
@@ -105,7 +115,11 @@
 				<ul class="links">
 					{#each xrefs.to ?? [] as x (x.address + (x.type ?? ''))}
 						<li>
-							<button class="flat" onclick={() => session.select(x.address, 'hex')}>
+							<button
+								class="flat"
+								data-addr={x.address}
+								onclick={() => session.select(x.address, 'hex')}
+							>
 								<span class="addr">{displayAddr(x.address)}</span>
 								<span class="kind">{x.is_call ? 'call' : x.is_jump ? 'jump' : (x.type ?? 'ref')}</span>
 							</button>
@@ -119,7 +133,11 @@
 				<ul class="links">
 					{#each xrefs.from ?? [] as x (x.address + (x.type ?? ''))}
 						<li>
-							<button class="flat" onclick={() => session.select(x.address, 'hex')}>
+							<button
+								class="flat"
+								data-addr={x.address}
+								onclick={() => session.select(x.address, 'hex')}
+							>
 								<span class="addr">{displayAddr(x.address)}</span>
 								<span class="kind">{x.is_call ? 'call' : x.is_jump ? 'jump' : (x.type ?? 'ref')}</span>
 							</button>

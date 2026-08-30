@@ -26,16 +26,21 @@ guttex/
 │   │   │   ├── api/client.ts   the only place that speaks HTTP
 │   │   │   ├── api/types.ts    mirrors ghidra-rest's openapi.yaml
 │   │   │   ├── format.ts       byte/time/address formatting + C tokenizer
+│   │   ├── plugins/        plugin contract (types.ts) + registry (host.svelte.ts)
 │   │   │   ├── state/session.svelte.ts   shared workbench state (runes)
 │   │   │   └── components/     TitleBar, SideDock, ListPanel, Decompiler,
 │   │   │                       HexView, InfoPanel, XrefsPanel, Console,
 │   │   │                       StatusBar, Splitter
 │   │   └── routes/
-│   │       ├── +page.svelte        job queue + upload
+│   │       ├── +page.svelte        job queue + upload + plugins
+│   │       ├── plugins/+page.svelte  plugin documentation, in-app
 │   │       └── j/[id]/+page.svelte the workbench
+│   ├── static/examples/     sample plugins (hello, ai-explain), installed by
+│   │                        nobody until you click install
 │   ├── vite.config.ts          dev proxy /api -> ghidra-rest
 │   └── svelte.config.js        adapter-static, SPA fallback
-└── docs/DESIGN.md              UI model + backend/DB plan
+├── docs/DESIGN.md              UI model + backend/DB plan
+└── docs/PLUGINS.md             plugin API, limits, trust model
 ```
 
 ## Why Svelte
@@ -135,7 +140,15 @@ Cutter's arrangement, in the browser:
 | Status bar | artifact counts, analysis duration, current address |
 
 One selection drives everything: click a row anywhere and the centre and right
-docks follow it. Dividers drag (and take arrow keys). Tab bars collapse into a
+docks follow it. The selection lives in the URL (`?a=401490`), so the browser's
+back/forward — including a mouse's thumb buttons — walks the functions you
+visited, and a workbench URL is shareable.
+
+Right-clicking anything with an address — a function row, a call/jump target,
+an xref — opens guttex's own menu: open, **open in new tab**, copy address /
+name / link. Right-clicking anywhere else leaves the browser menu alone, and
+the menu itself offers *browser default* (arms the next right-click to pass
+through); shift+right-click always bypasses it. Dividers drag (and take arrow keys). Tab bars collapse into a
 `⋯` menu when a dock is too narrow rather than clipping, and the active tab is
 never the one that gets hidden.
 
@@ -155,6 +168,27 @@ Design rules, if you extend it:
 - Lists page server-side. Never `limit=100000`.
 - A `409` from a result endpoint means "analysis still running", not an error —
   `ApiError.notReady` marks it.
+
+## Plugins
+
+guttex is a remote Ghidra and stops there. AI assistance, exporters, signature
+matching — none of it is in the default build, because most people just want to
+read a binary without an LLM in the loop. Those are plugins: installed by URL
+from the card on the landing page, and nothing is enabled until you say so.
+
+A plugin is an ES module with a default export — no build step, no bundler, no
+dependency on this repo. It can add a centre tab (`host.addPanel`, you get a DOM
+node and own it) and commands in the workbench actions menu (`host.addAction`),
+and it reads the open job through a scoped, read-only API.
+
+Two samples ship in `web/static/examples/` and install in one click:
+`hello-plugin.js` (~30 lines) and `ai-explain.js`, which explains the selected
+function via any OpenAI-compatible endpoint and defaults to a local Ollama.
+
+Plugins are **not sandboxed** — a plugin is ordinary JavaScript in the page and
+can reach the same-origin `/api` proxy, which carries your ghidra-rest token.
+Install only what you trust. Full API and trust model:
+[docs/PLUGINS.md](docs/PLUGINS.md), or `/plugins` in the running app.
 
 ## Related
 
