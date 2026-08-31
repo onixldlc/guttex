@@ -4,13 +4,16 @@
 	import { api } from '$lib/api/client';
 	import type { Capabilities, Job, JobOptions } from '$lib/api/types';
 	import { fmtBytes, fmtDuration, relTime, shortId } from '$lib/format';
+	import { device } from '$lib/state/device.svelte';
 	import PluginsPanel from '$components/PluginsPanel.svelte';
+	import { store } from '$lib/api/store';
 
 	let jobs = $state<Job[]>([]);
 	let caps = $state<Capabilities | null>(null);
 	let error = $state('');
 	let busy = $state(false);
 	let dragOver = $state(false);
+	let dropProject = $state(false);
 	let showOpts = $state(false);
 
 	let opts = $state<JobOptions & { force?: boolean }>({
@@ -36,11 +39,42 @@
 		error = '';
 		try {
 			const res = await api.submit(files[0], opts);
-			await goto(`/j/${res.job.id}`);
+			// a phone gets the phone workbench; the desktop one needs ~1000px
+			await goto(device.job(res.job.id));
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 		} finally {
 			busy = false;
+		}
+	}
+
+	// The other way in: a project bundle exported from another guttex. It
+	// lands under the binary's sha256, so it does not need this machine to
+	// have the same job id -- it needs the same binary.
+	let loading = $state(false);
+	let loaded = $state('');
+
+	async function load(files: FileList | null) {
+		if (!files?.length) return;
+		loading = true;
+		error = '';
+		loaded = '';
+		try {
+			const res = await store.importBundle(files[0]);
+			const job = jobs.find((j) => j.sha256 === res.id);
+			if (job) {
+				await goto(device.job(job.id));
+				return;
+			}
+			// No job here for that binary yet. The names are stored and will
+			// attach themselves the moment it is analysed on this machine.
+			loaded = `${res.name || res.file || res.id.slice(0, 12)}: ${res.renames} name${
+				res.renames === 1 ? '' : 's'
+			} loaded. Analyse the same binary here and they attach to it.`;
+		} catch (e) {
+			error = e instanceof Error ? e.message : String(e);
+		} finally {
+			loading = false;
 		}
 	}
 
@@ -72,6 +106,7 @@
 	<span class="brand">guttex</span>
 	<span class="dim">ghidra, without the ghidra ui</span>
 	<span class="spacer"></span>
+	{#if device.phone}<a href="/mobile">phone ui</a>{/if}
 	{#if caps}
 		<span class="badge">{caps.service} {caps.version}</span>
 		<span class="badge">ghidra {caps.ghidra_version}</span>
@@ -81,6 +116,7 @@
 </header>
 
 <main>
+	<div class="ways">
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
 		class="drop"
@@ -112,7 +148,7 @@
 		</button>
 
 		{#if showOpts}
-			<div class="opts">
+			<div class="opts" role="group" aria-label="analysis options">
 				<label><input type="checkbox" bind:checked={opts.decompile} /> decompile</label>
 				<label>max funcs <input type="number" bind:value={opts.decompile_max_funcs} min="0" /></label>
 				<label>
@@ -127,6 +163,43 @@
 		{/if}
 	</div>
 
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div
+		class="drop"
+		class:over={dropProject}
+		ondragover={(e) => {
+			e.preventDefault();
+			dropProject = true;
+		}}
+		ondragleave={() => (dropProject = false)}
+		ondrop={(e) => {
+			e.preventDefault();
+			dropProject = false;
+			load(e.dataTransfer?.files ?? null);
+		}}
+	>
+		<p class="big">{loading ? 'loading...' : 'or load a project'}</p>
+		<p class="dim">
+			a .zip exported from any guttex -- your names, the metadata and the analysis
+			artifacts, together
+		</p>
+		<label class="btn">
+			choose project
+			<input
+				type="file"
+				accept=".zip,application/zip"
+				hidden
+				disabled={loading}
+				onchange={(e) => load((e.currentTarget as HTMLInputElement).files)}
+			/>
+		</label>
+		<p class="dim small">
+			it lands under the binary's hash, so it finds its binary on any machine
+		</p>
+	</div>
+	</div>
+
+	{#if loaded}<p class="ok line">{loaded}</p>{/if}
 	{#if error}<p class="err line">{error}</p>{/if}
 
 	<PluginsPanel />
@@ -156,7 +229,7 @@
 					</thead>
 					<tbody>
 						{#each jobs as j (j.id)}
-							<tr onclick={() => goto(`/j/${j.id}`)} style="cursor:pointer">
+							<tr onclick={() => goto(device.job(j.id))} style="cursor:pointer">
 								<td class="shrink addr">{shortId(j.id)}</td>
 								<td title={j.filename}>{j.filename}</td>
 								<td class="shrink">{fmtBytes(j.size)}</td>
@@ -201,9 +274,28 @@
 		gap: 16px;
 		align-items: center;
 	}
-	.drop {
+	/* two ways in, side by side until the window is too narrow for both */
+	.ways {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 16px;
 		width: 100%;
 		max-width: 860px;
+		align-items: start;
+	}
+	@media (max-width: 760px) {
+		.ways {
+			grid-template-columns: 1fr;
+		}
+	}
+	.small {
+		font-size: 11px;
+	}
+	.ok {
+		color: var(--ok);
+	}
+	.drop {
+		width: 100%;
 		display: flex;
 		flex-direction: column;
 		align-items: center;

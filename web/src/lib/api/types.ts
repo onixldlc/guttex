@@ -123,6 +123,45 @@ export interface FunctionEntry {
 	called_by?: CallEdge[];
 }
 
+/**
+ * One prototype guttex has pushed back into Ghidra. `original` is what the
+ * analyser said before the first edit -- Ghidra has no cross-process undo, so
+ * resetting means re-applying this string.
+ */
+export interface SignatureEntry {
+	address: string;
+	prototype: string;
+	calling_convention?: string;
+	original: string;
+	original_calling_convention?: string;
+	at?: string;
+}
+
+export interface SignaturesResponse {
+	job: string;
+	/** false when this job kept no Ghidra project: nothing here can be retyped */
+	editable: boolean;
+	count: number;
+	signature: SignatureEntry[];
+	/** names this program's compiler spec accepts; empty on older analyses */
+	calling_conventions?: string[];
+}
+
+export interface SignatureApplied {
+	job: string;
+	address: string;
+	ok: true;
+	before: string;
+	prototype: string;
+	calling_convention?: string;
+	original?: string;
+	set_at?: string;
+	function?: FunctionEntry;
+	/** the retyped function plus every caller, all re-decompiled server side */
+	redecompiled?: string[];
+	duration_ms: number;
+}
+
 export interface Instruction {
 	address: string;
 	address_display?: string;
@@ -154,6 +193,14 @@ export interface DisasmIndexEntry {
 	count: number;
 }
 
+/** one line of decompiled C and the instructions Ghidra says produced it */
+export interface DecompLine {
+	/** 1-based line number into `c` */
+	n: number;
+	/** instruction addresses, ascending */
+	a: string[];
+}
+
 export interface Decompiled {
 	address: string;
 	address_display?: string;
@@ -162,6 +209,8 @@ export interface Decompiled {
 	ok: boolean;
 	error?: string;
 	c?: string;
+	/** absent when the analysis predates the line map */
+	lines?: DecompLine[];
 }
 
 export interface DecompiledIndexEntry {

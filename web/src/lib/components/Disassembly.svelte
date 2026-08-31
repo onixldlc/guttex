@@ -10,11 +10,17 @@
 	import { displayAddr } from '$lib/format';
 	import { mnemonicClass, tokenizeAsm } from '$lib/asmtok';
 	import { asmSel } from '$lib/state/asmsel.svelte';
+	import { aliasName, dispName } from '$lib/state/renames.svelte';
+	import { book, operandName } from '$lib/state/book.svelte';
 
 	let data = $state<DisasmListing | null>(null);
 	let loading = $state(false);
 	let error = $state('');
 	let showBytes = $state(true);
+	// Names on by default: a listing that says `CALL __security_init_cookie`
+	// is the point of having an analyser. The toggle is for when you want to
+	// read the addresses themselves -- comparing against another tool, mostly.
+	let showNames = $state(true);
 
 	// The listing has its own cursor line, like Ghidra's: clicking a row moves
 	// it without navigating away. Navigation (a call target, a sidebar row)
@@ -40,6 +46,7 @@
 			.then((d) => {
 				if (stale) return;
 				data = d;
+				book.learn(id, d.address, d.name);
 				selLo = selHi = -1;
 			})
 			.catch((e) => {
@@ -113,18 +120,24 @@
 	$effect(() => () => asmSel.clear());
 </script>
 
-{#snippet ops(text: string | undefined)}{#each tokenizeAsm(text) as tok, k (k)}<span class={tok.c}
-			>{tok.t}</span
+<!-- One operand token. A hex token that names something known is drawn as that
+     name -- the user's if they renamed it, Ghidra's otherwise -- with the
+     address it stands for kept on the title, so nothing is actually hidden. -->
+{#snippet ops(text: string | undefined, flow?: string)}{#each tokenizeAsm(text) as tok, k (k)}{@const nm =
+			showNames ? operandName(session.project, session.id, tok.t, flow) : ''}<span
+			class={nm ? 'sym' : tok.c}
+			title={nm ? tok.t : null}>{nm || aliasName(session.project, tok.t)}</span
 		>{/each}{/snippet}
 
 <div class="wrap">
 	<div class="sub">
 		{#if data}
-			<span class="mono name">{data.name}</span>
+			<span class="mono name">{dispName(session.project, data.address, data.name)}</span>
 			<span class="addr">{displayAddr(data.address)}</span>
 			<span class="dim">{data.count} instructions</span>
 			{#if data.truncated}<span class="err">truncated</span>{/if}
 			<span class="spacer"></span>
+			<label class="opt"><input type="checkbox" bind:checked={showNames} /> names</label>
 			<label class="opt"><input type="checkbox" bind:checked={showBytes} /> bytes</label>
 		{:else}
 			<span class="dim">pick a function in the left dock</span>
@@ -161,7 +174,7 @@
 											session.select(ins.flow!, 'disasm');
 										}}
 									>
-										{@render ops(ins.operands)}
+										{@render ops(ins.operands, ins.is_call ? ins.flow : undefined)}
 									</button>
 								{:else}
 									{@render ops(ins.operands)}
@@ -315,6 +328,11 @@
 	.o .flag {
 		color: var(--ec-flag);
 	}
+	/* A resolved address reads as a function name, so it takes `ec fname` --
+	   the same colour the name has everywhere else in the UI. */
+	.o .sym {
+		color: var(--ec-fname);
+	}
 	.o .str {
 		color: var(--ec-num);
 	}
@@ -346,6 +364,7 @@
 	button.target .size,
 	button.target .punct,
 	button.target .plain,
+	button.target .sym,
 	button.target .str {
 		color: inherit;
 	}

@@ -3,6 +3,7 @@
 	// centre, details/xrefs right, console across the bottom.
 	import { page } from '$app/state';
 	import { session, type CenterTab } from '$lib/state/session.svelte';
+	import { sync } from '$lib/state/sync.svelte';
 	import TitleBar from '$components/TitleBar.svelte';
 	import SideDock from '$components/SideDock.svelte';
 	import XrefsPanel from '$components/XrefsPanel.svelte';
@@ -19,6 +20,10 @@
 	import PluginPanel from '$components/PluginPanel.svelte';
 	import ActionsMenu from '$components/ActionsMenu.svelte';
 	import ContextMenu from '$components/ContextMenu.svelte';
+	import RenameDialog from '$components/RenameDialog.svelte';
+	import ExportDialog from '$components/ExportDialog.svelte';
+	import SignatureDialog from '$components/SignatureDialog.svelte';
+	import { signer } from '$lib/state/signature.svelte';
 	import { plugins } from '$lib/plugins/host.svelte';
 	import type { Tab } from '$components/tabs';
 	import { untrack } from 'svelte';
@@ -30,8 +35,15 @@
 
 	$effect(() => {
 		const id = page.params.id;
-		if (id) session.open(id);
-		return () => session.stop();
+		if (!id) return;
+		session.open(id);
+		// Renames live on the server, keyed by the binary's hash -- which
+		// only exists once the job has loaded, so sync watches for it.
+		const detach = sync.attach();
+		return () => {
+			session.stop();
+			detach();
+		};
 	});
 
 	// Selection rides in `?a=`, so the browser's own history is the address
@@ -45,6 +57,15 @@
 	});
 
 	$effect(() => plugins.init());
+
+	// A retype happens inside Ghidra, so the function entry guttex is holding
+	// -- its prototype, return type and parameter list -- is stale the moment
+	// it lands. Re-read it; the panels that show decompiled text watch
+	// `signer.rev` themselves.
+	$effect(() => {
+		if (!signer.rev || !session.id || !session.addr) return;
+		untrack(() => session.show(session.addr));
+	});
 
 	// Plugin panels are tabs like any other, appended after the built-ins.
 	let tabs = $derived<Tab[]>([
@@ -105,6 +126,9 @@
 
 <StatusBar />
 <ContextMenu />
+<RenameDialog />
+<ExportDialog />
+<SignatureDialog />
 
 <style>
 	.body {

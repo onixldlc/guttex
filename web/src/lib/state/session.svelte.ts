@@ -5,6 +5,7 @@ import { goto } from '$app/navigation';
 import { api, ApiError } from '$lib/api/client';
 import type { FunctionEntry, Job, Summary } from '$lib/api/types';
 import { normAddr } from '$lib/format';
+import { book } from './book.svelte';
 
 // `plugin:<pluginId>/<panelId>` tabs come from installed plugins.
 export type CenterTab =
@@ -41,6 +42,21 @@ class Session {
 
 	get title() {
 		return this.job?.filename || this.summary?.name || this.id;
+	}
+
+	/**
+	 * The project key: the binary's sha256, not the job id.
+	 *
+	 * ghidra-rest mints job ids from crypto/rand, so the same binary analysed on
+	 * two machines has two ids -- annotations keyed by one could never be
+	 * carried to the other. The content hash is the same everywhere, which is
+	 * what lets an exported project be opened wherever that binary is.
+	 *
+	 * Empty until the job has loaded, so nothing is ever written under a key
+	 * that turns out to belong to a different binary.
+	 */
+	get project() {
+		return this.job?.sha256 ?? '';
 	}
 
 	async open(id: string) {
@@ -132,6 +148,10 @@ class Session {
 		if (!a) return;
 		try {
 			this.fn = await api.fn(this.id, a);
+			// A function entry names itself, everything it calls and everything
+			// that calls it. That is most of what the listing is about to show
+			// as bare addresses, so it is worth keeping.
+			book.learnFn(this.id, this.fn);
 		} catch (e) {
 			// Not every address is a function -- strings and data land here too.
 			this.fnError = e instanceof Error ? e.message : String(e);

@@ -5,6 +5,7 @@
 	import type { XrefsResponse } from '$lib/api/types';
 	import { session } from '$lib/state/session.svelte';
 	import { displayAddr } from '$lib/format';
+	import { dispName } from '$lib/state/renames.svelte';
 
 	let xrefs = $state<XrefsResponse | null>(null);
 	let error = $state('');
@@ -44,7 +45,7 @@
 		{:else}
 			<div class="head">
 				<span class="addr">{displayAddr(session.addr)}</span>
-				{#if fn}<span class="name">{fn.name}</span>{/if}
+				{#if fn}<span class="name">{dispName(session.project, session.addr, fn.name)}</span>{/if}
 			</div>
 
 			{#if fn}
@@ -80,7 +81,7 @@
 									data-name={c.name}
 									onclick={() => session.select(c.address, 'decompiler')}
 								>
-									<span class="addr">{displayAddr(c.address)}</span>{c.name}
+									<span class="addr">{displayAddr(c.address)}</span>{dispName(session.project, c.address, c.name)}
 								</button>
 							</li>
 						{/each}
@@ -98,7 +99,7 @@
 									data-name={c.name}
 									onclick={() => session.select(c.address, 'decompiler')}
 								>
-									<span class="addr">{displayAddr(c.address)}</span>{c.name}
+									<span class="addr">{displayAddr(c.address)}</span>{dispName(session.project, c.address, c.name)}
 								</button>
 							</li>
 						{/each}

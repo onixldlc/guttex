@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { session } from '$lib/state/session.svelte';
 	import { displayAddr, fmtDuration } from '$lib/format';
+	import SyncChip from './SyncChip.svelte';
 
 	let counts = $derived(session.summary?.counts ?? session.job?.counts ?? {});
 	let keys = $derived(['functions', 'strings', 'symbols', 'imports', 'exports'].filter((k) => k in counts));
@@ -18,6 +19,7 @@
 	{/if}
 
 	<span class="spacer"></span>
+	<SyncChip />
 	{#if session.job?.duration_ms}
 		<span class="dim">analysis {fmtDuration(session.job.duration_ms)}</span>
 	{/if}

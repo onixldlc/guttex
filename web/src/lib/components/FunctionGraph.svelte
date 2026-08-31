@@ -7,11 +7,14 @@
 	import { api, ApiError } from '$lib/api/client';
 	import type { DisasmListing } from '$lib/api/types';
 	import { session } from '$lib/state/session.svelte';
+	import { aliasName, dispName } from '$lib/state/renames.svelte';
+	import { operandName } from '$lib/state/book.svelte';
 	import { displayAddr, normAddr } from '$lib/format';
 	import { mnemonicClass, tokenizeAsm } from '$lib/asmtok';
 	import { buildCfg } from '$lib/graph/cfg';
 	import { layered, type Layout } from '$lib/graph/layout';
 	import { Measured } from '$lib/graph/measure.svelte';
+	import { viewports } from '$lib/state/viewport';
 	import GraphCanvas from './GraphCanvas.svelte';
 
 	let data = $state<DisasmListing | null>(null);
@@ -69,15 +72,20 @@
 		);
 	});
 
-	// A fresh function starts framed; panning after that is the user's business.
+	// One remembered view per function, so leaving the tab and coming back --
+	// or walking through a few blocks -- keeps the zoom and position you set up.
+	let vkey = $derived(data ? `cfg:${session.id}:${normAddr(data.address)}` : '');
+
+	// A function nobody has looked at yet starts framed; after that the stored
+	// view wins and panning is the user's business.
 	let framed = '';
 	$effect(() => {
 		const l = layout;
-		const key = `${session.id}:${data?.address ?? ''}:${cfg?.blocks.length ?? 0}`;
+		const key = `${vkey}:${cfg?.blocks.length ?? 0}`;
 		// wait for real sizes -- fitting the placeholder layout frames nothing
 		if (!l || !cfg || !measured.ready || framed === key) return;
 		framed = key;
-		untrack(() => canvas?.fit());
+		if (!viewports.has(vkey)) untrack(() => canvas?.fit());
 	});
 
 	function poly(points: [number, number][]): string {
@@ -94,14 +102,18 @@
 	}
 </script>
 
-{#snippet ops(text: string | undefined)}{#each tokenizeAsm(text) as tok, k (k)}<span class={tok.c}
-			>{tok.t}</span
+<!-- Same rule as the flat listing: a hex token that names something known is
+     drawn as that name, address on the title. -->
+{#snippet ops(text: string | undefined, flow?: string)}{#each tokenizeAsm(text) as tok, k (k)}{@const nm =
+			operandName(session.project, session.id, tok.t, flow)}<span
+			class={nm ? 'sym' : tok.c}
+			title={nm ? tok.t : null}>{nm || aliasName(session.project, tok.t)}</span
 		>{/each}{/snippet}
 
 <div class="wrap">
 	<div class="sub">
 		{#if data && cfg}
-			<span class="mono name">{data.name}</span>
+			<span class="mono name">{dispName(session.project, data.address, data.name)}</span>
 			<span class="addr">{displayAddr(data.address)}</span>
 			<span class="dim">{cfg.blocks.length} blocks / {data.count} instructions</span>
 			{#if data.truncated}<span class="err">truncated</span>{/if}
@@ -115,7 +127,7 @@
 	{:else if error}
 		<p class="empty err">{error}</p>
 	{:else if cfg && layout}
-		<GraphCanvas bind:this={canvas} width={layout.width} height={layout.height}>
+		<GraphCanvas bind:this={canvas} width={layout.width} height={layout.height} viewKey={vkey}>
 			{#snippet children()}
 				<svg class="edges" width={layout.width} height={layout.height} aria-hidden="true">
 					<defs>
@@ -172,7 +184,7 @@
 													data-addr={ins.flow}
 													onclick={() => go(ins.flow!)}
 												>
-													{@render ops(ins.operands)}
+													{@render ops(ins.operands, ins.is_call ? ins.flow : undefined)}
 												</button>
 											{:else}
 												{@render ops(ins.operands)}
@@ -370,6 +382,9 @@
 	}
 	.o .flag {
 		color: var(--ec-flag);
+	}
+	.o .sym {
+		color: var(--ec-fname);
 	}
 	.o .str {
 		color: var(--ec-num);

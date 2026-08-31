@@ -46,8 +46,8 @@ export default {
 };
 ```
 
-Serve it anywhere the browser can reach -- a file server, a raw gist URL, a
-folder mounted into the container at `/usr/share/nginx/html/examples` -- and
+Serve it anywhere the browser can reach -- a file server, a raw gist URL, the
+app's own `/examples/` path (`web/static/examples`) -- and
 paste the URL into the plugins card on the landing page. Cross-origin URLs need
 CORS headers from whatever serves them.
 

@@ -48,7 +48,13 @@ services:
       # Service name on the compose network, not localhost.
       GHIDRAREST_URL: "http://ghidra-rest:8080"
       GHIDRAREST_TOKEN: "guttex-local"
-      GUTTEX_MAX_UPLOAD: "1024m"
+      BODY_SIZE_LIMIT: "1024M"
+      GUTTEX_PROJECTS: "/projects"
+    volumes:
+      # Projects: renames and archived artifacts. Everything guttex remembers
+      # is in here, so this is the volume you back up and the folder you copy
+      # to another machine.
+      - guttex-projects:/projects
     healthcheck:
       # Declared here as well as in the Dockerfile: podman drops the image
       # HEALTHCHECK unless the image was built with `--format docker`.
@@ -60,3 +66,4 @@ services:
 
 volumes:
   ghidra-rest-data:
+  guttex-projects:

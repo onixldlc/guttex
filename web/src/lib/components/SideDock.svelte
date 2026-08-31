@@ -15,6 +15,8 @@
 		type Row
 	} from './columns';
 	import { displayAddr, fmtBytes } from '$lib/format';
+	import { session } from '$lib/state/session.svelte';
+	import { dispName } from '$lib/state/renames.svelte';
 
 	type Kind = 'functions' | 'strings' | 'symbols' | 'imports' | 'exports' | 'types' | 'memory';
 	let kind = $state<Kind>('functions');
@@ -36,7 +38,7 @@
 			empty: 'no functions',
 			columns: [
 				addrCol,
-				{ label: 'name', get: (r) => str(r.name), title: (r) => str(r.signature) },
+				{ label: 'name', get: (r) => dispName(session.project, str(r.address), str(r.name)), title: (r) => str(r.signature) },
 				{ label: 'size', get: (r) => str(r.size), sort: (r) => numKey(r.size), shrink: true },
 				{ label: 'args', get: (r) => str(r.parameter_count), sort: (r) => numKey(r.parameter_count), shrink: true }
 			]
@@ -56,7 +58,7 @@
 			empty: 'no symbols',
 			columns: [
 				addrCol,
-				{ label: 'name', get: (r) => str(r.name), title: (r) => str(r.full_name) },
+				{ label: 'name', get: (r) => dispName(session.project, str(r.address), str(r.name)), title: (r) => str(r.full_name) },
 				{ label: 'type', get: (r) => str(r.type), shrink: true },
 				{ label: 'source', get: (r) => str(r.source), shrink: true }
 			]
@@ -66,7 +68,7 @@
 			empty: 'no imports',
 			columns: [
 				{ label: 'library', get: (r) => str(r.library), shrink: true },
-				{ label: 'name', get: (r) => str(r.name), title: (r) => str(r.original_name) },
+				{ label: 'name', get: (r) => dispName(session.project, str(r.address), str(r.name)), title: (r) => str(r.original_name) },
 				{
 					label: 'addr',
 					get: (r) => displayAddr(str(r.address)),
@@ -82,7 +84,7 @@
 			empty: 'no exports',
 			columns: [
 				addrCol,
-				{ label: 'name', get: (r) => str(r.name) },
+				{ label: 'name', get: (r) => dispName(session.project, str(r.address), str(r.name)) },
 				{ label: 'fn', get: (r) => yn(r.is_function), shrink: true }
 			]
 		},

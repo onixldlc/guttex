@@ -1,42 +1,26 @@
 #!/bin/sh
-# Renders the nginx config from its template into an ephemeral run dir, then
-# hands off to nginx. The image ships the template; the resolved config only
-# ever exists for the life of the container.
+# Makes sure the projects volume is usable before the server starts, then hands
+# off. Everything else guttex needs is read from the environment by SvelteKit at
+# request time, so there is nothing to render or template here any more.
 set -eu
 
-RUNDIR="${GUTTEX_RUNDIR:-/tmp/guttex}"
-TEMPLATE="${GUTTEX_TEMPLATE:-/etc/guttex/nginx.conf.template}"
-LISTEN_PORT="${GUTTEX_PORT:-8080}"
-MAX_UPLOAD="${GUTTEX_MAX_UPLOAD:-1024m}"
+PROJECTS="${GUTTEX_PROJECTS:-/projects}"
 UPSTREAM="${GHIDRAREST_URL:-http://127.0.0.1:8080}"
 TOKEN="${GHIDRAREST_TOKEN:-}"
+PORT="${PORT:-8080}"
 
-# strip one trailing slash so proxy_pass gets exactly one
-UPSTREAM="${UPSTREAM%/}"
+mkdir -p "$PROJECTS"
 
-rm -rf "$RUNDIR"
-mkdir -p "$RUNDIR" "$RUNDIR/client_body" "$RUNDIR/proxy" "$RUNDIR/fastcgi" "$RUNDIR/uwsgi" "$RUNDIR/scgi"
+# A read-only or root-owned mount is the one failure that looks like a bug in
+# the app rather than in the compose file, so say so plainly and stop.
+if ! touch "$PROJECTS/.writable" 2>/dev/null; then
+	echo "guttex: $PROJECTS is not writable by $(id -un) -- renames cannot be saved" >&2
+	exit 1
+fi
+rm -f "$PROJECTS/.writable"
 
-# Written, not sed-substituted: a URL or token containing sed metacharacters
-# would otherwise corrupt the config.
-{
-	printf 'proxy_pass %s/;\n' "$UPSTREAM"
-	if [ -n "$TOKEN" ]; then
-		printf 'proxy_set_header Authorization "Bearer %s";\n' "$TOKEN"
-	else
-		# drop whatever the browser sent; this proxy owns the credential
-		printf 'proxy_set_header Authorization "";\n'
-	fi
-} > "$RUNDIR/proxy-upstream.conf"
-
-sed \
-	-e "s|__RUNDIR__|${RUNDIR}|g" \
-	-e "s|__LISTEN_PORT__|${LISTEN_PORT}|g" \
-	-e "s|__MAX_UPLOAD__|${MAX_UPLOAD}|g" \
-	"$TEMPLATE" > "$RUNDIR/nginx.conf"
-
-nginx -t -c "$RUNDIR/nginx.conf"
-
-echo "guttex: serving on :${LISTEN_PORT}, /api -> ${UPSTREAM} (token: $([ -n "$TOKEN" ] && echo yes || echo no))"
+echo "guttex: serving on :${PORT}"
+echo "guttex: /api -> ${UPSTREAM} (token: $([ -n "$TOKEN" ] && echo yes || echo no))"
+echo "guttex: projects in ${PROJECTS}"
 
 exec "$@"

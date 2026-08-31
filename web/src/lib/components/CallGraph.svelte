@@ -5,68 +5,30 @@
 	//
 	// The edge set itself comes from one walk of the function list, cached in
 	// IndexedDB per job -- so this is slow exactly once per binary.
+	//
+	// Which root and which branches are open live in `callGraphView`, outside
+	// this component. This is the map of the whole binary rather than a view of
+	// one function: walking into a callee, switching tabs or hitting back must
+	// not throw the map away and drop you back at the entry point.
 	import { untrack } from 'svelte';
 	import { session } from '$lib/state/session.svelte';
+	import { callGraphView as cg } from '$lib/state/callgraph.svelte';
+	import { dispName } from '$lib/state/renames.svelte';
 	import { displayAddr, normAddr } from '$lib/format';
 	import { layered, type Layout } from '$lib/graph/layout';
-	import {
-		autoExpand,
-		buildTree,
-		dropCallGraph,
-		loadCallGraph,
-		type CallGraph
-	} from '$lib/graph/callgraph';
+	import { buildTree } from '$lib/graph/callgraph';
 	import { Measured } from '$lib/graph/measure.svelte';
 	import GraphCanvas from './GraphCanvas.svelte';
 
-	let graph = $state<CallGraph | null>(null);
-	let loading = $state(false);
-	let progress = $state('');
-	let error = $state('');
-	let root = $state('');
-	let openPaths = $state<string[]>([]);
 	let canvas = $state<GraphCanvas | null>(null);
-
-	async function load(force = false) {
-		const job = session.id;
-		if (!job) return;
-		loading = true;
-		error = '';
-		progress = force ? 'rebuilding...' : 'loading...';
-		try {
-			const g = await loadCallGraph(job, {
-				force,
-				onProgress: (done, total) => (progress = `reading functions ${done}/${total}`)
-			});
-			graph = g;
-			const first = g.roots[0] ?? Object.keys(g.nodes)[0] ?? '';
-			root = first;
-			openPaths = first ? [...autoExpand(g, first)] : [];
-		} catch (e) {
-			graph = null;
-			error = e instanceof Error ? e.message : String(e);
-		} finally {
-			loading = false;
-			progress = '';
-		}
-	}
 
 	$effect(() => {
 		const job = session.id;
-		if (!job) {
-			graph = null;
-			return;
-		}
-		untrack(() => load());
+		untrack(() => cg.ensure(job));
 	});
 
-	async function rebuild() {
-		await dropCallGraph(session.id);
-		await load(true);
-	}
-
-	let opened = $derived(new Set(openPaths));
-	let tree = $derived(graph && root ? buildTree(graph, root, opened) : null);
+	let opened = $derived(new Set(cg.open));
+	let tree = $derived(cg.graph && cg.root ? buildTree(cg.graph, cg.root, opened) : null);
 
 	// Opening a branch can make everything above it wider, which slides the
 	// whole layout sideways. The node that was clicked is held still on screen
@@ -76,42 +38,29 @@
 	function toggle(id: string) {
 		const p = layout?.nodes.get(id);
 		anchor = p ? { id, x: p.x, y: p.y } : null;
-		if (opened.has(id)) {
-			// closing a node closes everything under it, so reopening it does not
-			// dump an old subtree back on screen
-			openPaths = openPaths.filter((p) => p !== id && !p.startsWith(id + '/'));
-		} else {
-			openPaths = [...openPaths, id];
-		}
-	}
-
-	function setRoot(addr: string) {
-		if (!graph?.nodes[addr]) return;
-		root = addr;
-		openPaths = [...autoExpand(graph, addr)];
+		cg.toggle(id);
 	}
 
 	// sizes measured from the DOM, same as the function graph
 	const measured = new Measured();
 	const reg = measured.node;
 
-
 	let layout = $derived.by((): Layout | null => {
 		if (!tree || !tree.nodes.length) return null;
 		return layered(
 			tree.nodes.map((n) => ({ id: n.id, ...(measured.sizes[n.id] ?? { w: 180, h: 34 }) })),
 			tree.edges,
-			{ root, rankGap: 40, nodeGap: 20 }
+			{ root: cg.root, rankGap: 40, nodeGap: 20 }
 		);
 	});
 
-	// Frame on a new root only. Refitting on every expand would yank the view
-	// out from under whoever is reading it.
-	let framed = '';
+	// Frame on a new root only, and only the first time that root is drawn --
+	// `cg.framed` outlives the component, so coming back to the tab keeps the
+	// view you had. Refitting on every expand would yank it out from under you.
 	$effect(() => {
 		const l = layout;
-		if (!l || !root || framed === root || !measured.ready) return;
-		framed = root;
+		if (!l || !cg.root || cg.framed === cg.root || !measured.ready) return;
+		cg.framed = cg.root;
 		untrack(() => canvas?.fit());
 	});
 
@@ -132,46 +81,59 @@
 	});
 
 	const poly = (pts: [number, number][]) => pts.map(([x, y]) => `${x},${y}`).join(' ');
-	let rootList = $derived(graph ? graph.roots.slice(0, 400) : []);
+	let rootList = $derived(cg.graph ? cg.graph.roots.slice(0, 400) : []);
 </script>
 
 <div class="wrap">
 	<div class="sub">
-		{#if graph}
+		{#if cg.graph}
 			<label class="pick">
 				root
-				<select value={root} onchange={(e) => setRoot(e.currentTarget.value)}>
+				<select value={cg.root} onchange={(e) => cg.setRoot(e.currentTarget.value)}>
 					{#each rootList as r (r)}
-						<option value={r}>{graph.nodes[r]?.name ?? r} &nbsp; {displayAddr(r)}</option>
+						<option value={r}
+							>{dispName(session.project, r, cg.graph.nodes[r]?.name ?? r)} &nbsp; {displayAddr(
+								r
+							)}</option
+						>
 					{/each}
 				</select>
 			</label>
 			<button
 				class="mini"
 				title="use the address selected elsewhere as the root"
-				disabled={!session.addr || !graph.nodes[normAddr(session.addr)]}
-				onclick={() => setRoot(normAddr(session.addr))}
+				disabled={!session.addr || !cg.graph.nodes[normAddr(session.addr)]}
+				onclick={() => cg.setRoot(normAddr(session.addr))}
 			>
 				root at selection
 			</button>
-			<span class="dim">{graph.count} functions</span>
+			<span class="dim">{cg.graph.count} functions</span>
 			<span class="spacer"></span>
-			<span class="dim" title={graph.built}>cached {new Date(graph.built).toLocaleString()}</span>
-			<button class="mini" onclick={rebuild} disabled={loading}>rebuild</button>
+			<span class="dim" title={cg.graph.built}
+				>cached {new Date(cg.graph.built).toLocaleString()}</span
+			>
+			<button class="mini" onclick={() => cg.rebuild(session.id)} disabled={cg.loading}
+				>rebuild</button
+			>
 		{:else}
-			<span class="dim">{progress || 'call graph'}</span>
+			<span class="dim">{cg.progress || 'call graph'}</span>
 		{/if}
 	</div>
 
-	{#if loading}
-		<p class="empty">{progress || 'building call graph...'}</p>
-	{:else if error}
-		<p class="empty err">{error}</p>
+	{#if cg.loading}
+		<p class="empty">{cg.progress || 'building call graph...'}</p>
+	{:else if cg.error}
+		<p class="empty err">{cg.error}</p>
 	{:else if tree && layout}
-		<GraphCanvas bind:this={canvas} width={layout.width} height={layout.height}>
+		<GraphCanvas
+			bind:this={canvas}
+			width={layout.width}
+			height={layout.height}
+			viewKey={cg.key}
+		>
 			{#snippet toolbar()}
 				{#if tree.capped}<span class="cap" title="expand fewer branches">capped</span>{/if}
-				<button title="collapse all" onclick={() => (openPaths = [])}>collapse</button>
+				<button title="collapse all" onclick={() => cg.collapse()}>collapse</button>
 			{/snippet}
 			{#snippet children()}
 				<svg class="edges" width={layout.width} height={layout.height} aria-hidden="true">
@@ -217,11 +179,11 @@
 						</button>
 						<button
 							class="label"
-							title="open {n.name}"
+							title="open {dispName(session.project, n.addr, n.name)}"
 							ondblclick={() => session.select(n.addr, 'graph')}
 							onclick={() => n.kids && toggle(n.id)}
 						>
-							<span class="nm">{n.name}</span>
+							<span class="nm">{dispName(session.project, n.addr, n.name)}</span>
 							<span class="ad mono">{displayAddr(n.addr)}</span>
 							{#if n.kids}<span class="kids">{n.kids}</span>{/if}
 						</button>
@@ -229,7 +191,7 @@
 				{/each}
 			{/snippet}
 		</GraphCanvas>
-	{:else if graph}
+	{:else if cg.graph}
 		<p class="empty">nothing to draw -- no entry point and nothing callerless</p>
 	{:else}
 		<p class="empty">no call graph</p>

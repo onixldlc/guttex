@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { api } from '$lib/api/client';
 	import { session } from '$lib/state/session.svelte';
+	import { exporter } from '$lib/state/exporter.svelte';
 	import { displayAddr, fmtBytes, shortId } from '$lib/format';
 
 	let jump = $state('');
@@ -59,7 +60,19 @@
 	{#if session.job?.status === 'queued' || session.job?.status === 'running'}
 		<button class="flat" onclick={cancel}>Cancel</button>
 	{/if}
-	<a class="btn" href={api.exportUrl(session.id)} download>Export</a>
+	<!-- One file: the names and Ghidra's artifacts together. Two buttons meant
+	     pairing two downloads up by hand on the other machine.
+
+	     Not an <a download>: packing can take a while on a project whose
+	     artifacts have not been pulled yet, and a link that looks inert gets
+	     clicked ten times. `exporter` runs one at a time and says so. -->
+	<button
+		class="btn"
+		onclick={() => exporter.run(session.project, session.id)}
+		disabled={exporter.busy}
+		title="the whole project as one file: names, metadata and the analysis artifacts"
+		>{exporter.busy ? 'Exporting...' : 'Export'}</button
+	>
 	<button
 		class="flat"
 		class:on={session.consoleOpen}

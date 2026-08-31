@@ -17,6 +17,8 @@ import type {
 	JobsPage,
 	MemBlock,
 	Page,
+	SignatureApplied,
+	SignaturesResponse,
 	StringEntry,
 	SubmitResponse,
 	PageQuery,
@@ -140,6 +142,21 @@ export const api = {
 	decompiledIndex: (id: string, p: PageQuery = {}) =>
 		json<Page<DecompiledIndexEntry>>(`/v1/results/${id}/decompiled${qs({ ...p })}`),
 	xrefs: (id: string, addr: string) => json<XrefsResponse>(`/v1/results/${id}/xrefs/${addr}`),
+
+	// --- signatures: the only calls that write back into Ghidra ---
+	// Each one re-opens the job's Ghidra project headless, so it takes tens of
+	// seconds rather than milliseconds. Callers must show that they are waiting.
+	signatures: (id: string) => json<SignaturesResponse>(`/v1/results/${id}/signatures`),
+	// `calling_convention` is separate from the prototype on purpose: Ghidra's
+	// C parser accepts `__cdecl` in the text and then discards it.
+	setSignature: (id: string, addr: string, prototype: string, calling_convention = '') =>
+		json<SignatureApplied>(`/v1/results/${id}/function/${addr}/signature`, {
+			method: 'PUT',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ prototype, calling_convention })
+		}),
+	clearSignature: (id: string, addr: string) =>
+		json<SignatureApplied>(`/v1/results/${id}/function/${addr}/signature`, { method: 'DELETE' }),
 	hexdump: (id: string, addr: string, length = 256) =>
 		json<HexdumpResponse>(`/v1/results/${id}/hexdump/${addr}${qs({ length })}`)
 };

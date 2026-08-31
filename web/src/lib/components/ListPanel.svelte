@@ -5,6 +5,7 @@
 	import { session } from '$lib/state/session.svelte';
 	import { ApiError } from '$lib/api/client';
 	import { displayAddr } from '$lib/format';
+	import { renames } from '$lib/state/renames.svelte';
 	import type { Column, Fetcher, Row } from './columns';
 
 	let {
@@ -42,8 +43,9 @@
 				limit: pageSize,
 				offset: reset ? 0 : rows.length
 			});
-			rows = reset ? page.items : [...rows, ...page.items];
-			total = page.total;
+			const found = reset ? await withRenamed(page.items) : page.items;
+			rows = reset ? found : [...rows, ...found];
+			total = page.total + (found.length - page.items.length);
 		} catch (e) {
 			if (e instanceof ApiError && e.notReady) notReady = true;
 			else error = e instanceof Error ? e.message : String(e);
@@ -51,6 +53,29 @@
 		} finally {
 			loading = false;
 		}
+	}
+
+	/**
+	 * ghidra-rest filters on the names *it* knows, so a search for a function
+	 * you renamed finds nothing. Translate: any rename whose new name matches
+	 * the filter is re-asked under the name Ghidra has, and those rows are put
+	 * in front. One extra request per matching rename, capped by the store.
+	 */
+	async function withRenamed(items: Row[]): Promise<Row[]> {
+		const originals = q ? renames.originalsFor(session.project, q) : [];
+		if (!originals.length) return items;
+		const seen = new Set(items.map((r) => displayAddr(addrOf(r))));
+		const extra: Row[] = [];
+		for (const orig of originals) {
+			const page = await fetcher(session.id, { q: orig, limit: 20 }).catch(() => null);
+			for (const r of page?.items ?? []) {
+				const key = displayAddr(addrOf(r));
+				if (seen.has(key)) continue;
+				seen.add(key);
+				extra.push(r);
+			}
+		}
+		return extra.length ? [...extra, ...items] : items;
 	}
 
 	// Sorting is client-side over the rows fetched so far -- ghidra-rest has no

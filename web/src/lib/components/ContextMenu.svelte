@@ -10,9 +10,14 @@
 	import { plugins } from '$lib/plugins/host.svelte';
 	import { displayAddr, normAddr } from '$lib/format';
 	import { session } from '$lib/state/session.svelte';
+	import { device } from '$lib/state/device.svelte';
 	import { asmSel, type CopyKind } from '$lib/state/asmsel.svelte';
+	import { dispName, localName } from '$lib/state/renames.svelte';
+	import { renameLocal, renameSymbol } from '$lib/rename';
 
-	type Target = { x: number; y: number; addr: string; name: string };
+	// `ident` is set for a decompiler identifier that resolved to no address --
+	// a local. It can be renamed, but there is nothing to open or copy a link to.
+	type Target = { x: number; y: number; addr: string; name: string; ident?: string };
 
 	let menu = $state<Target | null>(null);
 	let el = $state<HTMLElement | null>(null);
@@ -21,7 +26,15 @@
 	// Rows a copy would take: the highlighted block, or the single row that was
 	// right-clicked. Zero when the target is not a listing row at all, which is
 	// what hides the copy items on a function or xref row.
-	const selCount = $derived(menu ? asmSel.rows(menu.addr).length : 0);
+	const selCount = $derived(menu && !menu.ident ? asmSel.rows(menu.addr).length : 0);
+	// what the rest of the UI shows for this thing, renames included
+	const shownName = $derived(
+		!menu
+			? ''
+			: menu.ident
+				? localName(session.project, session.addr, menu.ident)
+				: dispName(session.project, menu.addr, menu.name)
+	);
 
 	$effect(() => {
 		const onMenu = (e: MouseEvent) => {
@@ -30,11 +43,20 @@
 				menu = null;
 				return; // native menu
 			}
-			const hit = (e.target as HTMLElement | null)?.closest?.('[data-addr]') as HTMLElement | null;
+			const el = e.target as HTMLElement | null;
+			const hit = el?.closest?.('[data-addr]') as HTMLElement | null;
 			const addr = normAddr(hit?.dataset.addr ?? '');
 			if (!addr) {
-				menu = null;
-				return; // not ours: native menu
+				// a decompiled identifier with no symbol behind it: still renameable
+				const idHit = el?.closest?.('[data-id]') as HTMLElement | null;
+				const ident = idHit?.dataset.id ?? '';
+				if (!ident) {
+					menu = null;
+					return; // not ours: native menu
+				}
+				e.preventDefault();
+				menu = { x: e.clientX, y: e.clientY, addr: '', name: ident, ident };
+				return;
 			}
 			e.preventDefault();
 			menu = { x: e.clientX, y: e.clientY, addr, name: hit?.dataset.name ?? '' };
@@ -82,7 +104,8 @@
 	});
 
 	function urlFor(addr: string) {
-		return new URL(`/j/${session.id}?a=${encodeURIComponent(addr)}`, location.href).href;
+		// same rule as every other job link: the screen decides the front end
+		return new URL(`${device.job(session.id)}?a=${encodeURIComponent(addr)}`, location.href).href;
 	}
 
 	async function copy(text: string, label?: string) {
@@ -136,23 +159,39 @@
 		tabindex="-1"
 	>
 		<div class="head mono">
-			{displayAddr(menu.addr)}{menu.name ? ` ${menu.name}` : ''}
+			{menu.ident ? shownName : displayAddr(menu.addr) + (shownName ? ` ${shownName}` : '')}
 		</div>
-		<button role="menuitem" onclick={() => act((t) => session.select(t.addr))}>open</button>
 		<button
 			role="menuitem"
-			onclick={() => act((t) => window.open(urlFor(t.addr), '_blank', 'noopener'))}
+			onclick={() =>
+				act((t) =>
+					t.ident
+						? renameLocal(session.project, session.addr, t.ident)
+						: renameSymbol(session.project, t.addr, t.name)
+				)}
 		>
-			open in new tab
+			rename{menu.ident ? ' variable' : ''}<span class="key">n</span>
 		</button>
-		<div class="sep"></div>
-		<button role="menuitem" onclick={() => act((t) => copy(displayAddr(t.addr)))}>
-			copy address
-		</button>
-		{#if menu.name}
-			<button role="menuitem" onclick={() => act((t) => copy(t.name))}>copy name</button>
+		{#if !menu.ident}
+			<div class="sep"></div>
+			<button role="menuitem" onclick={() => act((t) => session.select(t.addr))}>open</button>
+			<button
+				role="menuitem"
+				onclick={() => act((t) => window.open(urlFor(t.addr), '_blank', 'noopener'))}
+			>
+				open in new tab
+			</button>
+			<div class="sep"></div>
+			<button role="menuitem" onclick={() => act((t) => copy(displayAddr(t.addr)))}>
+				copy address
+			</button>
 		{/if}
-		<button role="menuitem" onclick={() => act((t) => copy(urlFor(t.addr)))}>copy link</button>
+		{#if shownName}
+			<button role="menuitem" onclick={() => copy(shownName)}>copy name</button>
+		{/if}
+		{#if !menu.ident}
+			<button role="menuitem" onclick={() => act((t) => copy(urlFor(t.addr)))}>copy link</button>
+		{/if}
 		{#if selCount}
 			<div class="sep"></div>
 			<button role="menuitem" onclick={() => act((t) => copyLines(t, 'full', 'listing'))}>
@@ -206,6 +245,8 @@
 	}
 	.menu button {
 		width: 100%;
+		display: flex;
+		align-items: center;
 		justify-content: flex-start;
 		text-align: left;
 		text-transform: none;
@@ -223,6 +264,13 @@
 		height: 1px;
 		margin: 4px 0;
 		background: var(--border-soft);
+	}
+	.key {
+		margin-left: auto;
+		padding-left: 12px;
+		color: var(--fg-faint);
+		font-family: var(--mono);
+		font-size: 11px;
 	}
 	.hint {
 		padding: 4px 8px 2px;

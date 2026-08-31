@@ -6,57 +6,95 @@
 browser (Svelte SPA)
       |  same-origin /api/*    (no credentials in the bundle)
       v
-guttex backend            <-- does not exist yet
-      |  bearer token
-      v
-ghidra-rest  --> analyzeHeadless --> JSON artifacts on disk
+guttex (SvelteKit, Node)
+      |-- /api/guttex/*  -> its own project store, on a volume
+      |-- /api/*         -> ghidra-rest, bearer token attached here
+                              |
+                              v
+                   analyzeHeadless --> JSON artifacts on disk
 ```
 
-Today the middle box is a stand-in: `vite.config.ts` proxies `/api/*` straight
-at ghidra-rest and adds the `Authorization` header in the dev server process.
-Every path the SPA calls is a ghidra-rest path, so when the real backend lands
-it can pass unknown `/api/v1/*` requests straight through and only intercept
-what it owns.
+One process. It serves the app, owns guttex's state and fronts the analyser.
+
+There was an nginx in this diagram while the build was pure static, and briefly
+a separate Go service when state arrived. Both were wrong: the moment guttex
+needs to remember anything it needs a runtime, and it already has one. A second
+language and a second process would have bought an extra image to keep in step
+with nothing to show for it.
 
 ## Why the SPA never talks to ghidra-rest directly
 
 1. The API token would have to live in the browser. It cannot.
 2. ghidra-rest has no CORS layer, and adding one just to widen who can call it
    is the wrong direction.
-3. Anything guttex remembers — projects, renames, notes, bookmarks — is guttex
+3. Anything guttex remembers -- projects, renames, notes, bookmarks -- is guttex
    state, not ghidra-rest state. ghidra-rest is deliberately stateless past its
    artifact directory, and it should stay that way.
 
-## Backend, when we get to it
+`$lib/server/*` makes (1) structural rather than a matter of discipline:
+SvelteKit refuses to import those modules from client code, so the token and the
+projects path cannot be shipped to a browser by accident.
 
-Unresolved, but the constraints are already clear:
+## State: a folder, not a database
 
-- **Language: Go.** Matches ghidra-rest, single static binary, and
-  `embed.FS` can serve `web/build` so deployment stays one artifact.
-- **DB: SQLite first.** Single-node lab tool, WAL mode, no server to run. The
-  schema below is plain enough to move to Postgres later if guttex ever grows
-  multiple users.
-- **The backend owns what ghidra-rest refuses to.** ghidra-rest keys everything
-  by job id and forgets the rest. guttex adds identity and edits on top.
+```
+$GUTTEX_PROJECTS/<sha256 of the binary>/
+    meta.json           name, timestamps, revision, rename count, last job id
+    annotations.json    { symbols: {addr: entry}, locals: {"fn:ident": entry} }
+    ghidra-export.zip   ghidra-rest's artifact set
+```
 
-Sketch of the tables:
+An entry is `{ from, to, at, by }`. `at` is the editing device's clock.
 
-| table | holds |
-|---|---|
-| `project` | a named workspace; groups binaries |
-| `binary` | sha256, original filename, size, the ghidra-rest job id, cached summary fields |
-| `annotation` | (binary, address, kind, value) — user renames, comments, bookmarks, tags |
-| `note` | free markdown per binary or per address |
-| `job_event` | status transitions, so the queue view survives a backend restart |
+**The key is the binary's sha256, not the job id.** ghidra-rest mints job ids
+from `crypto/rand`, so the same binary gets a different id on every instance --
+a project keyed by one could never be opened on another machine. The content
+hash is stable everywhere, so an exported project finds its binary by itself and
+the job id becomes what it should be: this machine's handle, recorded in
+`meta.json` and refreshed on open.
 
-Endpoint split, once it exists:
+Export is the folder zipped (`lib/server/bundle.ts`, store-only entries, written
+by hand -- less code than a dependency, and `unzip` reads it). Import merges by
+the same rule as a sync push: a bundle is a very late device reporting what it
+knows.
 
-- `/api/v1/*` — proxied to ghidra-rest untouched (results, logs, export).
-- `/api/guttex/*` — projects, annotations, notes, search across binaries.
+SQLite was the plan and is no longer. The property that actually matters is
+portability: analyse on a 32-core box, copy one directory to a laptop, keep
+working. A folder of JSON gives that for free, is greppable, diffable and needs
+no migration story. If guttex ever grows real multi-user concurrency, the store
+module is one file with a narrow interface -- a DB connector goes behind it
+without the rest of the app noticing.
 
-The overlay rule: results come from ghidra-rest, annotations come from the DB,
-the backend merges them on read so the SPA sees one object with a user-supplied
-`name` winning over Ghidra's `FUN_00101234`.
+### Sync
+
+Neither device is authoritative and both work offline, so this is not a
+transaction. It is two documents and a merge rule.
+
+- **Per entry, later `at` wins.** Never per document: two people renaming
+  different functions in the same binary is the normal case, and whole-file
+  last-writer-wins throws away whoever pushed second.
+- **Removals are tombstones** (`to: ""`), not deleted keys. A device that was
+  offline would otherwise resurrect a name on its next push.
+- **Push is debounced**, and its response is the merged document, so one round
+  trip is both directions. **Pull** polls with `If-None-Match`, so the quiet
+  case costs a 304.
+- Equal timestamps keep what is stored, which makes a replayed push a no-op and
+  keeps pollers quiet.
+
+Clock skew between devices is the known weakness. It is bounded by how wrong a
+phone's clock is, and the failure mode is "the wrong one of your own two renames
+won", not corruption. A vector clock would be the fix if that ever bites.
+
+## Endpoint split
+
+- `/api/v1/*` -- proxied to ghidra-rest untouched (results, logs, export).
+- `/api/guttex/v1/projects...` -- projects, annotations, archive, export/import.
+
+The overlay is done in the client, not the server: results come from ghidra-rest
+and names are resolved at render time, by address where an address is in hand
+and otherwise by whole-token match. Merging server-side would mean re-serving
+every artifact endpoint through guttex, which is a lot of proxy for a lookup the
+browser can do in a map.
 
 ## Things the frontend already assumes
 

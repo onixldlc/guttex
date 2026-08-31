@@ -1,5 +1,9 @@
-# guttex: the SvelteKit SPA, built once, served by nginx which also fronts
-# ghidra-rest at /api so the browser never holds an API token.
+# guttex: the SvelteKit app, served by its own Node server.
+#
+# That server does three things, which is why there is no nginx here any more:
+# it hands out the UI, it owns /api/guttex (projects and annotations, kept in
+# the /projects volume), and it fronts ghidra-rest at /api with the bearer
+# token attached so the browser never holds one.
 #
 #   podman build -t guttex:dev -f docker/Dockerfile .
 
@@ -21,12 +25,13 @@ COPY web/static ./static
 RUN npm run build
 
 
-FROM docker.io/library/nginx:1.27-alpine
+FROM docker.io/library/node:22-alpine
 
-# the stock site config would shadow ours
-RUN rm -f /etc/nginx/conf.d/default.conf
+WORKDIR /app
 
-COPY docker/nginx.conf.template /etc/guttex/nginx.conf.template
+# adapter-node emits a self-contained server; guttex has no runtime
+# dependencies, so the build output is the whole application.
+COPY --from=build /app/build ./build
 
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 
@@ -34,12 +39,16 @@ COPY docker/verify.sh /usr/local/bin/verify.sh
 
 RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/verify.sh
 
-COPY --from=build /app/build /usr/share/nginx/html
-
-ENV GUTTEX_PORT=8080 \
-    GUTTEX_RUNDIR=/tmp/guttex \
-    GUTTEX_MAX_UPLOAD=1024m \
+ENV NODE_ENV=production \
+    PORT=8080 \
+    GUTTEX_PROJECTS=/projects \
+    BODY_SIZE_LIMIT=1024M \
     GHIDRAREST_URL=http://127.0.0.1:8080
+
+# Everything guttex remembers. Mount it, or the renames die with the container.
+VOLUME ["/projects"]
+
+USER node
 
 EXPOSE 8080
 
@@ -48,4 +57,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 
-CMD ["nginx", "-g", "daemon off;", "-c", "/tmp/guttex/nginx.conf"]
+CMD ["node", "build"]
