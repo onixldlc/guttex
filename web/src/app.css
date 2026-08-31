@@ -21,6 +21,10 @@
 	--row-sel: #4b6eaf;
 	/* backing for a multi-line text selection in the listing */
 	--row-range: rgba(82, 148, 226, 0.22);
+	/* backing for instructions the decompiler mapped a line of C onto; amber so
+	   it never reads as a selection, and survives sitting next to one */
+	--row-mark: rgba(237, 147, 102, 0.16);
+	--mark-edge: #ed9366;
 
 	/* Graph flow edges. Green/red for the two sides of a conditional is the
 	   one convention Ghidra, Cutter and IDA all share -- keep it. */

@@ -2,13 +2,16 @@
 	// Center view: the decompiled C for whatever address is selected, tokenized
 	// and rendered as spans -- never `{@html}`.
 	//
-	// Ghidra names every stack slot `local_128` and every unnamed function
-	// `FUN_00101250`. Those names are not edited here as text: double-click one
-	// (or right-click it) and guttex renames the *symbol*, which repaints the
-	// function list, the listing, the graphs and the xrefs at the same time.
-	// See `state/renames.svelte.ts`.
+	// Double-click a name to go to it, the way every other view here navigates.
 	//
-	// Hovering a line shows the instructions behind it.
+	// Ghidra names every stack slot `local_128` and every unnamed function
+	// `FUN_00101250`. Those names are not edited here as text: right-click one
+	// and guttex renames the *symbol*, which repaints the function list, the
+	// listing, the graphs and the xrefs at the same time. See
+	// `state/renames.svelte.ts`.
+	//
+	// Hovering a line shows the instructions behind it; clicking its number
+	// carries the same set to the disassembly tab, lit.
 	import { api, ApiError } from '$lib/api/client';
 	import type { Decompiled, DisasmListing, Instruction } from '$lib/api/types';
 	import { session } from '$lib/state/session.svelte';
@@ -16,9 +19,12 @@
 	import { mnemonicClass, tokenizeAsm } from '$lib/asmtok';
 	import { addrInName, aliasName, dispName, localName } from '$lib/state/renames.svelte';
 	import { operandName } from '$lib/state/book.svelte';
-	import { renameLocal, renameSymbol } from '$lib/rename';
+	import { plugins } from '$lib/plugins/host.svelte';
 	import { signer } from '$lib/state/signature.svelte';
 	import { indexAsm, mapLine, type AsmIndex, type Hit } from '$lib/decomp/asmmap';
+	import { asmMark } from '$lib/state/asmmark.svelte';
+	import { scrolls } from '$lib/state/scrollmem';
+	import { tick } from 'svelte';
 
 	let data = $state<Decompiled | null>(null);
 	let loading = $state(false);
@@ -102,18 +108,28 @@
 		return localName(session.project, fnAddr, tok.t);
 	}
 
-	function rename(ident: string) {
-		const addr = resolve(ident);
-		if (addr) renameSymbol(session.project, addr, ident);
-		else renameLocal(session.project, fnAddr, ident);
-	}
-
+	/**
+	 * Double-click opens what a name refers to. Renaming is the right-click
+	 * menu's job -- it is where every other per-symbol action already lives,
+	 * and a double-click that edits instead of navigating is the opposite of
+	 * what a disassembler trains your hands to expect.
+	 *
+	 * A local has no address to go to, and an import has no body in this
+	 * binary; neither navigates, because landing on an empty pane reads as a
+	 * bug rather than an answer.
+	 */
 	function onDbl(e: MouseEvent) {
 		const hit = (e.target as HTMLElement | null)?.closest?.('[data-id]') as HTMLElement | null;
 		const ident = hit?.dataset.id;
 		if (!ident) return;
 		e.preventDefault();
-		rename(ident);
+		const addr = resolve(ident);
+		if (!addr) return;
+		if (addr.includes(':')) {
+			plugins.notify('guttex', `${ident} is imported -- no body in this binary`);
+			return;
+		}
+		session.select(addr);
 	}
 
 	// ------------------------------------------------------------------ hover
@@ -151,8 +167,9 @@
 	 * serves it as `lines` when the analysis was new enough to export it.
 	 * Without that, fall back to matching the text of the line.
 	 */
-	async function hover(line: number, x: number, y: number) {
-		if (!(await ensureAsm()) || !index) return;
+	async function behind(line: number): Promise<{ hits: Hit[]; exact: boolean }> {
+		const none = { hits: [] as Hit[], exact: false };
+		if (!(await ensureAsm()) || !index) return none;
 
 		const exact = data?.lines?.find((l) => l.n === line);
 		if (exact) {
@@ -161,14 +178,41 @@
 				const ins = own.get(normAddr(a));
 				if (ins) hits.push({ ins, why: '' });
 			}
-			card = hits.length ? { line, x, y, hits, exact: true } : null;
-			return;
+			return { hits, exact: true };
 		}
 
 		const src = (data?.c ?? '').split('\n')[line - 1] ?? '';
-		const hits = mapLine(src, index);
-		card = hits.length ? { line, x, y, hits, exact: false } : null;
+		return { hits: mapLine(src, index), exact: false };
 	}
+
+	async function hover(line: number, x: number, y: number) {
+		const { hits, exact } = await behind(line);
+		// the pointer may have moved on while the listing was being fetched
+		card = hits.length ? { line, x, y, hits, exact } : null;
+	}
+
+	/**
+	 * Same question as the hover card, answered in the listing instead: mark the
+	 * instructions this line compiled from and switch to the disassembly tab,
+	 * which scrolls to them. No navigation -- they belong to the function that
+	 * is already selected.
+	 */
+	async function toAsm(line: number) {
+		if (!(await asmMark.goto(line))) return;
+		card = null;
+		session.tab = 'disasm';
+	}
+
+	// Lend the resolver out while this panel is mounted. The right-click menu
+	// is global and has no listing of its own; unpublishing on teardown keeps
+	// it from answering for a function that is no longer on screen.
+	$effect(() => {
+		asmMark.source = async (line: number) => ({
+			fn: fnAddr,
+			addrs: (await behind(line)).hits.map((h) => h.ins.address)
+		});
+		return () => (asmMark.source = null);
+	});
 
 	// keep the card on screen no matter which corner the pointer is in
 	let pos = $derived.by(() => {
@@ -178,6 +222,31 @@
 		const left = card.x + 18 + w > winW ? Math.max(8, card.x - 18 - w) : card.x + 18;
 		const top = card.y + 18 + h > winH ? Math.max(8, card.y - 12 - h) : card.y + 18;
 		return { left, top };
+	});
+
+	// ----------------------------------------------------------------- scroll
+
+	// Where this function was last left off. Saved on every scroll (the store
+	// coalesces the writes) and put back when the panel comes up again, which
+	// happens on every trip through another centre tab.
+	let bodyEl = $state<HTMLElement | undefined>();
+	let scrollKey = $derived(session.id && fnAddr ? `${session.id}:${fnAddr}` : '');
+
+	$effect(() => {
+		const key = scrollKey;
+		const el = bodyEl;
+		data?.c; // restore once the text that gives the panel its height is in
+		if (!el || !key) return;
+		const top = scrolls.get(key);
+		if (!top) return;
+		// `tick` for the rows, a frame for their layout: scrollTop is clamped to
+		// the height the element has *now*, so setting it too early lands at 0.
+		tick().then(() =>
+			requestAnimationFrame(() => {
+				// leave it alone if the reader already moved in the meantime
+				if (bodyEl && bodyEl.scrollTop === 0) bodyEl.scrollTop = top;
+			})
+		);
 	});
 
 	// ---------------------------------------------------------------- actions
@@ -223,7 +292,10 @@
 			<span class="addr">{displayAddr(data.address)}</span>
 			{#if data.ok === false}<span class="err">decompilation failed</span>{/if}
 			<span class="spacer"></span>
-			<span class="dim hint">double-click a name to rename it</span>
+			<span class="dim hint"
+				>double-click a name to open it &middot; right-click to rename &middot; click a line number
+				for the listing</span
+			>
 			<button class="flat" onclick={editSig} title="edit the function signature in ghidra (f)"
 				>signature</button
 			>
@@ -241,15 +313,28 @@
 		<p class="empty err">{data.error}</p>
 	{:else if data?.c}
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
-		<div class="panel-body code" onmouseleave={() => (card = null)} ondblclick={onDbl}>
+		<div
+			class="panel-body code"
+			bind:this={bodyEl}
+			onscroll={() => bodyEl && scrolls.set(scrollKey, bodyEl.scrollTop)}
+			onmouseleave={() => (card = null)}
+			ondblclick={onDbl}
+		>
 			<table class="c">
 				<tbody>
 					{#each lines as toks, i (i)}
 						<tr
 							class:has={mapped.has(i + 1)}
+							data-line={i + 1}
 							onmouseenter={(e) => hover(i + 1, e.clientX, e.clientY)}
 						>
-							<td class="n">{i + 1}</td>
+							<td class="n"
+								><button
+									class="ln"
+									title="show the instructions for this line in the disassembly"
+									onclick={() => toAsm(i + 1)}>{i + 1}</button
+								></td
+							>
 							<td class="src"
 								>{#each toks as tok, k (k)}<span
 										class={tok.c}
@@ -281,6 +366,9 @@
 		<div class="chead">
 			<span>line {card.line}</span>
 			<span class="dim">{card.exact ? 'ghidra line map' : 'matched by text'}</span>
+		</div>
+		<div class="chint">
+			<span class="dim">click the line number -- or right-click the line -- for the listing</span>
 		</div>
 		<table class="asm">
 			<tbody>
@@ -366,6 +454,19 @@
 	tr.has .n {
 		color: var(--syn-addr);
 	}
+	button.ln {
+		border: none;
+		background: transparent;
+		padding: 0;
+		font: inherit;
+		color: inherit;
+		cursor: pointer;
+	}
+	button.ln:hover {
+		color: var(--accent);
+		text-decoration: underline;
+		background: transparent;
+	}
 	.src {
 		padding-right: 12px !important;
 		width: 100%;
@@ -415,6 +516,11 @@
 		border-radius: 4px;
 		box-shadow: 0 6px 20px rgb(0 0 0 / 45%);
 		pointer-events: none;
+	}
+	.chint {
+		padding: 3px 10px 0;
+		font-size: 10px;
+		color: var(--fg-faint);
 	}
 	.chead {
 		display: flex;

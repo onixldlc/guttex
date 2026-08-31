@@ -2,6 +2,7 @@
 	import { api } from '$lib/api/client';
 	import { session } from '$lib/state/session.svelte';
 	import { exporter } from '$lib/state/exporter.svelte';
+	import { progress } from '$lib/state/progress.svelte';
 	import { displayAddr, fmtBytes, shortId } from '$lib/format';
 
 	let jump = $state('');
@@ -58,6 +59,9 @@
 	</form>
 
 	{#if session.job?.status === 'queued' || session.job?.status === 'running'}
+		<span class="badge running" title="what analyzeHeadless is doing right now"
+			>{progress.line(session.id)}</span
+		>
 		<button class="flat" onclick={cancel}>Cancel</button>
 	{/if}
 	<!-- One file: the names and Ghidra's artifacts together. Two buttons meant

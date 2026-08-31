@@ -64,11 +64,15 @@ async function raw(path: string, init: RequestInit = {}): Promise<Response> {
 		throw new ApiError(0, `network error: ${(e as Error).message}`);
 	}
 	if (res.ok) return res;
+	throw errorFrom(res.status, await res.text(), res.statusText);
+}
 
-	// ghidra-rest errors are {"error": "...", "status": n}; anything else is
-	// a proxy or gateway page, so fall back to the raw text.
-	const text = await res.text();
-	let message = text.slice(0, 400) || res.statusText;
+/**
+ * ghidra-rest errors are {"error": "...", "status": n}; anything else is a
+ * proxy or gateway page, so fall back to the raw text.
+ */
+function errorFrom(status: number, text: string, fallback = ''): ApiError {
+	let message = text.slice(0, 400) || fallback;
 	let body: unknown = text;
 	try {
 		const parsed = JSON.parse(text);
@@ -77,7 +81,7 @@ async function raw(path: string, init: RequestInit = {}): Promise<Response> {
 	} catch {
 		/* not JSON */
 	}
-	throw new ApiError(res.status, message, body);
+	return new ApiError(status, message, body);
 }
 
 async function json<T>(path: string, init?: RequestInit): Promise<T> {
@@ -111,17 +115,54 @@ export const api = {
 	inputUrl: (id: string) => `${BASE}/v1/jobs/${id}/input`,
 	exportUrl: (id: string) => `${BASE}/v1/jobs/${id}/export`,
 
-	/** multipart submit; `file` is the binary under analysis. `force` skips the
-	    sha256 dedup and always starts a fresh job. */
-	submit: (file: File, opts: JobOptions & { name?: string; force?: boolean } = {}) => {
-		const fd = new FormData();
-		fd.append('file', file, file.name);
-		for (const [k, v] of Object.entries(opts)) {
-			if (v === undefined || v === '') continue;
-			fd.append(k, typeof v === 'boolean' ? (v ? '1' : '0') : String(v));
-		}
-		return json<SubmitResponse>('/v1/jobs', { method: 'POST', body: fd });
-	},
+	/**
+	 * multipart submit; `file` is the binary under analysis. `force` skips the
+	 * sha256 dedup and always starts a fresh job.
+	 *
+	 * The one call that does not go through `fetch`: a browser cannot report
+	 * request-body progress on a fetch, and a 240MB upload with no bar looks
+	 * exactly like a hang. `XMLHttpRequest` still has `upload.onprogress`, so
+	 * it is used here and nowhere else.
+	 */
+	submit: (
+		file: File,
+		opts: JobOptions & { name?: string; force?: boolean } = {},
+		watch: { onProgress?: (sent: number, total: number) => void; signal?: AbortSignal } = {}
+	) =>
+		new Promise<SubmitResponse>((resolve, reject) => {
+			const fd = new FormData();
+			fd.append('file', file, file.name);
+			for (const [k, v] of Object.entries(opts)) {
+				if (v === undefined || v === '') continue;
+				fd.append(k, typeof v === 'boolean' ? (v ? '1' : '0') : String(v));
+			}
+
+			const xhr = new XMLHttpRequest();
+			xhr.open('POST', BASE + '/v1/jobs');
+			// `lengthComputable` is false for a multipart body in some browsers;
+			// the file size is the number that matters and we already have it.
+			xhr.upload.onprogress = (e) =>
+				watch.onProgress?.(e.loaded, e.lengthComputable ? e.total : file.size);
+			xhr.onerror = () =>
+				reject(new ApiError(0, 'network error: the upload did not reach the server'));
+			xhr.ontimeout = () => reject(new ApiError(0, 'the upload timed out'));
+			xhr.onabort = () => reject(new ApiError(0, 'upload canceled'));
+			xhr.onload = () => {
+				const text = xhr.responseText ?? '';
+				if (xhr.status >= 200 && xhr.status < 300) {
+					try {
+						resolve(JSON.parse(text) as SubmitResponse);
+					} catch {
+						reject(new ApiError(xhr.status, 'the server did not answer with JSON', text));
+					}
+					return;
+				}
+				reject(errorFrom(xhr.status || 0, text, xhr.statusText));
+			};
+
+			watch.signal?.addEventListener('abort', () => xhr.abort(), { once: true });
+			xhr.send(fd);
+		}),
 
 	// --- results ---
 	summary: (id: string) => json<Summary>(`/v1/results/${id}/summary`),

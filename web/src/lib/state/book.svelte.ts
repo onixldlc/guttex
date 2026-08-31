@@ -29,6 +29,8 @@ class Book {
 	#names = $state<Record<string, Record<string, string>>>({});
 	#miss = new Set<string>();
 	#busy = new Set<string>();
+	/** jobs whose import table has been read */
+	#imports = new Set<string>();
 
 	#bin(job: string): Record<string, string> {
 		let b = this.#names[job];
@@ -76,6 +78,12 @@ class Book {
 		if (!job || !a) return undefined;
 		const have = this.#names[job]?.[a];
 		if (have) return have;
+		// `external:a0` is a thunk, not a function -- asking `/function` for it
+		// is a guaranteed 404. The import table is what names these.
+		if (a.includes(':')) {
+			this.externals(job);
+			return undefined;
+		}
 
 		const k = `${job}:${a}`;
 		if (this.#miss.has(k) || this.#busy.has(k)) return undefined;
@@ -93,9 +101,32 @@ class Book {
 		return undefined;
 	}
 
+	/**
+	 * Learn the whole import table.
+	 *
+	 * An imported function is called through its thunk, and Ghidra addresses
+	 * that thunk as `external:a0` -- an address in no memory block, in no
+	 * function list, so `want` can never resolve one however many times it is
+	 * asked. The names live in the import table instead: a few hundred rows
+	 * even for a large Windows binary, read once per job.
+	 */
+	externals(job: string) {
+		if (!job || this.#imports.has(job)) return;
+		this.#imports.add(job);
+		const page = (offset: number): Promise<void> =>
+			api.imports(job, { limit: 1000, offset }).then((p) => {
+				for (const im of p.items) if (im.thunk_address) this.learn(job, im.thunk_address, im.name);
+				const next = offset + (p.count || p.items.length);
+				if (p.items.length && next < p.total) return page(next);
+			});
+		// a failed read is not cached: the next caller may as well try again
+		page(0).catch(() => this.#imports.delete(job));
+	}
+
 	/** drop a job's book -- only needed when its analysis is rebuilt */
 	forget(job: string) {
 		delete this.#names[job];
+		this.#imports.delete(job);
 		for (const k of [...this.#miss]) if (k.startsWith(job + ':')) this.#miss.delete(k);
 	}
 }
@@ -113,16 +144,29 @@ const HEX = /^0[xX][0-9a-fA-F]+$/;
  * what has already been learned, so a listing of arithmetic constants costs
  * nothing.
  */
-export function operandName(
-	project: string,
-	job: string,
-	token: string,
-	flow?: string
-): string {
+export function operandName(project: string, job: string, token: string, flow?: string): string {
 	if (!HEX.test(token)) return '';
 	const a = normAddr(token);
 	if (!a) return '';
-	const mine = renames.symOf(project, a);
+	// An import is called through its IAT slot: `CALL dword ptr [0x006c927c]`,
+	// where the operand is the slot and the destination is `external:a0`.
+	// Ghidra names the destination, not the slot, so the slot is drawn as the
+	// import it reaches -- which is what the decompiler shows for the same
+	// call, and what makes a listing of a Windows binary readable.
+	const dest = flow && flow.includes(':') ? normAddr(flow) : a;
+	const mine = renames.symOf(project, dest);
 	if (mine) return mine;
-	return (flow && a === normAddr(flow) ? book.want(job, a) : book.nameOf(job, a)) ?? '';
+	return (flow && dest === normAddr(flow) ? book.want(job, dest) : book.nameOf(job, dest)) ?? '';
+}
+
+/**
+ * The destination worth naming for an instruction: a call's target, and any
+ * external, because an import reached by a tail jump is still an import. An
+ * ordinary jump inside the function is left alone -- its target is a label,
+ * not a name, and asking the server about every one of them is a request per
+ * branch.
+ */
+export function namedFlow(ins: { flow?: string; is_call?: boolean }): string | undefined {
+	if (!ins.flow) return undefined;
+	return ins.is_call || ins.flow.includes(':') ? ins.flow : undefined;
 }

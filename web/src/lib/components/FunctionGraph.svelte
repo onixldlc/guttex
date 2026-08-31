@@ -8,13 +8,14 @@
 	import type { DisasmListing } from '$lib/api/types';
 	import { session } from '$lib/state/session.svelte';
 	import { aliasName, dispName } from '$lib/state/renames.svelte';
-	import { operandName } from '$lib/state/book.svelte';
+	import { namedFlow, operandName } from '$lib/state/book.svelte';
 	import { displayAddr, normAddr } from '$lib/format';
 	import { mnemonicClass, tokenizeAsm } from '$lib/asmtok';
 	import { buildCfg } from '$lib/graph/cfg';
 	import { layered, type Layout } from '$lib/graph/layout';
 	import { Measured } from '$lib/graph/measure.svelte';
 	import { viewports } from '$lib/state/viewport';
+	import { asmMark } from '$lib/state/asmmark.svelte';
 	import GraphCanvas from './GraphCanvas.svelte';
 
 	let data = $state<DisasmListing | null>(null);
@@ -56,6 +57,17 @@
 	});
 
 	let cfg = $derived(buildCfg(data?.instructions));
+
+	// What is on screen, for the right-click menu's hand-off to the flat
+	// listing. Only this view knows which addresses belong to the function it
+	// drew, and the menu is global.
+	$effect(() => {
+		const fn = data?.address;
+		if (!fn) return;
+		const inside = new Set((data?.instructions ?? []).map((i) => normAddr(i.address)));
+		asmMark.scope = { fn: normAddr(fn), has: (a: string) => inside.has(normAddr(a)) };
+		return () => (asmMark.scope = null);
+	});
 
 	// Blocks are sized by the browser, not guessed: the layout runs on what the
 	// monospace text actually measured, so nothing overlaps at any font size.
@@ -184,7 +196,7 @@
 													data-addr={ins.flow}
 													onclick={() => go(ins.flow!)}
 												>
-													{@render ops(ins.operands, ins.is_call ? ins.flow : undefined)}
+													{@render ops(ins.operands, namedFlow(ins))}
 												</button>
 											{:else}
 												{@render ops(ins.operands)}

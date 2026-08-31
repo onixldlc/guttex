@@ -8,12 +8,13 @@
 	import type { Capabilities, Job, JobOptions } from '$lib/api/types';
 	import { fmtBytes, relTime, shortId } from '$lib/format';
 	import { store } from '$lib/api/store';
+	import { upload } from '$lib/state/upload.svelte';
+	import UploadMeter from '$components/UploadMeter.svelte';
 	import '$lib/mobile/mobile.css';
 
 	let jobs = $state<Job[]>([]);
 	let caps = $state<Capabilities | null>(null);
 	let error = $state('');
-	let busy = $state(false);
 	let showOpts = $state(false);
 
 	let opts = $state<JobOptions & { force?: boolean }>({
@@ -34,16 +35,14 @@
 	}
 
 	async function submit(files: FileList | null) {
-		if (!files?.length) return;
-		busy = true;
+		if (!files?.length || upload.busy) return;
 		error = '';
 		try {
-			const res = await api.submit(files[0], opts);
+			// `upload` owns the request so the bar can watch the bytes
+			const res = await upload.run(files[0], opts);
 			await goto(`/mobile/${res.job.id}`);
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
-		} finally {
-			busy = false;
 		}
 	}
 
@@ -108,14 +107,15 @@
 		<div class="m-pad">
 			<div class="m-card">
 				<label class="btn primary">
-					{busy ? 'uploading...' : 'choose a binary'}
+					{upload.busy ? 'uploading...' : 'choose a binary'}
 					<input
 						type="file"
 						hidden
-						disabled={busy}
+						disabled={upload.busy}
 						onchange={(e) => submit((e.currentTarget as HTMLInputElement).files)}
 					/>
 				</label>
+				<UploadMeter />
 				<span class="dim">ELF, PE, Mach-O, raw -- whatever Ghidra's loaders accept</span>
 				<button class="flat" onclick={() => (showOpts = !showOpts)}>
 					{showOpts ? 'hide' : 'analysis'} options

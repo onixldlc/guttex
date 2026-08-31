@@ -11,6 +11,7 @@
 	import { session, type CenterTab } from '$lib/state/session.svelte';
 	import { sync } from '$lib/state/sync.svelte';
 	import { exporter } from '$lib/state/exporter.svelte';
+	import { progress } from '$lib/state/progress.svelte';
 	import SyncChip from '$components/SyncChip.svelte';
 	import { displayAddr, normAddr, shortId } from '$lib/format';
 	import { dispName } from '$lib/state/renames.svelte';
@@ -181,7 +182,7 @@
 	{:else if session.job && !session.ready}
 		<p class="empty">
 			{session.job.status === 'queued' || session.job.status === 'running'
-				? 'analysing... results appear when it finishes'
+				? `${progress.line(session.id)}... results appear when it finishes`
 				: `job ${session.job.status}`}
 		</p>
 		{#if session.job.error}<p class="empty err">{session.job.error}</p>{/if}

@@ -6,6 +6,7 @@ import { api, ApiError } from '$lib/api/client';
 import type { FunctionEntry, Job, Summary } from '$lib/api/types';
 import { normAddr } from '$lib/format';
 import { book } from './book.svelte';
+import { progress } from './progress.svelte';
 
 // `plugin:<pluginId>/<panelId>` tabs come from installed plugins.
 export type CenterTab =
@@ -96,10 +97,14 @@ class Session {
 	/** poll a queued/running job until it settles, then pull the summary */
 	watch(everyMs = 2000) {
 		this.stop();
+		progress.pull(this.id);
 		this.poll = setInterval(async () => {
 			try {
 				const j = await api.getJob(this.id);
 				this.job = j;
+				// The status alone is `running` for ten minutes; the headless log
+				// is what says which phase and how far in.
+				progress.pull(this.id);
 				if (this.consoleOpen) this.refreshLog();
 				if (j.status !== 'queued' && j.status !== 'running') {
 					this.stop();

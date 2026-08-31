@@ -5,13 +5,15 @@
 	import type { Capabilities, Job, JobOptions } from '$lib/api/types';
 	import { fmtBytes, fmtDuration, relTime, shortId } from '$lib/format';
 	import { device } from '$lib/state/device.svelte';
+	import { progress } from '$lib/state/progress.svelte';
+	import { upload } from '$lib/state/upload.svelte';
+	import UploadMeter from '$components/UploadMeter.svelte';
 	import PluginsPanel from '$components/PluginsPanel.svelte';
 	import { store } from '$lib/api/store';
 
 	let jobs = $state<Job[]>([]);
 	let caps = $state<Capabilities | null>(null);
 	let error = $state('');
-	let busy = $state(false);
 	let dragOver = $state(false);
 	let dropProject = $state(false);
 	let showOpts = $state(false);
@@ -34,17 +36,15 @@
 	}
 
 	async function submit(files: FileList | null) {
-		if (!files?.length) return;
-		busy = true;
+		if (!files?.length || upload.busy) return;
 		error = '';
 		try {
-			const res = await api.submit(files[0], opts);
+			// `upload` owns the request so the bar can watch the bytes
+			const res = await upload.run(files[0], opts);
 			// a phone gets the phone workbench; the desktop one needs ~1000px
 			await goto(device.job(res.job.id));
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
-		} finally {
-			busy = false;
 		}
 	}
 
@@ -96,7 +96,10 @@
 			.catch(() => {});
 		// keep the queue live while anything is in flight
 		const t = setInterval(() => {
-			if (jobs.some((j) => j.status === 'queued' || j.status === 'running')) refresh();
+			const busy = jobs.filter((j) => j.status === 'queued' || j.status === 'running');
+			if (busy.length) refresh();
+			// the status is one word; the headless log is what says how far in
+			for (const j of busy) progress.pull(j.id);
 		}, 2500);
 		return () => clearInterval(t);
 	});
@@ -132,14 +135,15 @@
 			submit(e.dataTransfer?.files ?? null);
 		}}
 	>
-		<p class="big">{busy ? 'uploading...' : 'drop a binary here'}</p>
+		<p class="big">{upload.busy ? `uploading ${upload.name}` : 'drop a binary here'}</p>
 		<p class="dim">ELF, PE, Mach-O, raw -- whatever Ghidra's loaders accept</p>
+		<UploadMeter />
 		<label class="btn primary">
 			choose file
 			<input
 				type="file"
 				hidden
-				disabled={busy}
+				disabled={upload.busy}
 				onchange={(e) => submit((e.currentTarget as HTMLInputElement).files)}
 			/>
 		</label>
@@ -231,9 +235,16 @@
 						{#each jobs as j (j.id)}
 							<tr onclick={() => goto(device.job(j.id))} style="cursor:pointer">
 								<td class="shrink addr">{shortId(j.id)}</td>
-								<td title={j.filename}>{j.filename}</td>
+								<td title={j.filename}>
+									{j.filename}
+									{#if j.error}<span class="why" title={j.error}>{j.error}</span>{/if}
+								</td>
 								<td class="shrink">{fmtBytes(j.size)}</td>
-								<td class="shrink"><span class="badge {j.status}">{j.status}</span></td>
+								<td class="shrink"
+									><span class="badge {j.status}" title={j.error || j.status}
+										>{j.status === 'running' ? progress.line(j.id) : j.status}</span
+									></td
+								>
 								<td class="shrink dim">{j.language ?? ''}</td>
 								<td class="shrink dim">{fmtDuration(j.duration_ms)}</td>
 								<td class="shrink dim">{relTime(j.created_at)}</td>
@@ -293,6 +304,14 @@
 	}
 	.ok {
 		color: var(--ok);
+	}
+	.why {
+		display: block;
+		font-size: 11px;
+		color: var(--err);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 	.drop {
 		width: 100%;

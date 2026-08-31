@@ -14,6 +14,7 @@
 	import CallGraph from '$components/CallGraph.svelte';
 	import InfoPanel from '$components/InfoPanel.svelte';
 	import ConsolePanel from '$components/ConsolePanel.svelte';
+	import Progress from '$components/Progress.svelte';
 	import StatusBar from '$components/StatusBar.svelte';
 	import Splitter from '$components/Splitter.svelte';
 	import TabStrip from '$components/TabStrip.svelte';
@@ -92,9 +93,6 @@
 				bind:active={() => session.tab, (v) => (session.tab = v as CenterTab)}
 				label="views"
 			/>
-			{#if session.job && session.job.status !== 'done'}
-				<span class="dim note">results appear when analysis finishes</span>
-			{/if}
 			<ActionsMenu />
 		</div>
 
@@ -117,6 +115,12 @@
 
 	<Splitter bind:value={rightW} min={200} max={640} invert />
 	<div class="dock" style:width="{rightW}px"><XrefsPanel /></div>
+
+	<!-- Covers the docks and the centre, which have nothing to draw yet, and
+	     nothing below: the console dock stays sharp and usable. -->
+	{#if session.job && session.job.status !== 'done'}
+		<Progress />
+	{/if}
 </div>
 
 {#if session.consoleOpen}
@@ -132,6 +136,7 @@
 
 <style>
 	.body {
+		position: relative; /* the analysis window pins to this, not to the page */
 		flex: 1 1 auto;
 		min-height: 0;
 		display: flex;
@@ -165,10 +170,5 @@
 		gap: 0;
 		padding: 0 8px 0 0;
 		overflow: visible;
-	}
-	.note {
-		font-size: 11px;
-		text-transform: none;
-		letter-spacing: 0;
 	}
 </style>

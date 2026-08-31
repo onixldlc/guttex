@@ -1,0 +1,250 @@
+name: Build and Push
+
+# Adapted from onixldlc/ghidra-rest: same check / determine-version /
+# build-and-push / release shape, same buildx + ghcr + gha cache, same
+# softprops release step. Differs where a SvelteKit app differs from a Go
+# server:
+#   - the checks are `svelte-check` and a production `vite build`, because a
+#     type error and a build error are the only two ways this breaks before it
+#     ships
+#   - there are no release binaries. The deliverable is the image, so the
+#     release carries the compose file you need to run it
+#   - the smoke test runs the image's own `verify.sh` -- app shell, client-side
+#     routes, project store, origin rule -- and then proves the /api proxy
+#     against a stand-in upstream, which is the part guttex actually owns
+#
+# Every push and PR builds and checks. Only a pushed tag v* logs in, publishes
+# the image and cuts a release. A tag push and its branch push both run to
+# completion on purpose: the branch run is the safety check, the tag run is the
+# release.
+
+on:
+  push:
+    tags: ["v*"]
+  #   branches: [master, main]
+  # pull_request:
+  #   branches: [master, main]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: guttex
+  NODE_VERSION: "22"
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  check:
+    name: Typecheck and build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install
+        # `ci`, not `install`: the lockfile is the input, and a workflow that
+        # quietly resolves a different tree than the Dockerfile does is a
+        # workflow that passes while the image breaks.
+        run: npm ci --no-audit --no-fund
+
+      - name: Lockfile is in step with package.json
+        # `npm ci` fails outright on a mismatch, so reaching here means they
+        # agree. Say so, because the failure above is otherwise cryptic.
+        run: echo "package-lock.json matches package.json"
+
+      - name: svelte-check
+        run: npm run check
+
+      - name: Build
+        run: npm run build
+
+  determine-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      publish: ${{ steps.version.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # git describe needs tags and history.
+          fetch-depth: 0
+
+      - name: Resolve version
+        id: version
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME}"
+            PUBLISH=true
+          else
+            VERSION="$(git describe --tags --always --dirty 2>/dev/null || echo dev)"
+            PUBLISH=false
+          fi
+          # Docker tags allow a narrow character set; sanitise rather than fail.
+          VERSION="$(printf '%s' "${VERSION}" | tr -c 'A-Za-z0-9._-' '-')"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "publish=${PUBLISH}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION} publish=${PUBLISH}"
+
+  build-and-push:
+    name: Build image
+    runs-on: ubuntu-latest
+    needs: [check, determine-version]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build amd64 locally
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: linux/amd64
+          load: true
+          tags: ${{ env.IMAGE_NAME }}:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test
+        # Two halves. `verify.sh` ships in the image and is the healthcheck, so
+        # running it here tests exactly what the container tests on itself:
+        # app shell, client-side routes, project store, and the origin rule in
+        # both directions. Then the proxy, against a stand-in upstream -- the
+        # request has to arrive with the path intact and the token attached,
+        # and the token has to come from the server rather than the bundle.
+        run: |
+          set -euo pipefail
+          net=guttex-ci
+          docker network create "$net"
+
+          docker run -d --name upstream --network "$net" \
+            -v "$PWD/.github/ci/upstream.js:/upstream.js:ro" \
+            node:22-alpine node /upstream.js
+
+          docker run -d --name guttex --network "$net" -p 8088:8080 \
+            -v guttex-ci-projects:/projects \
+            -e GHIDRAREST_URL=http://upstream:8080 \
+            -e GHIDRAREST_TOKEN=ci-token-not-a-secret \
+            "${IMAGE_NAME}:ci"
+
+          dump() {
+            echo "--- guttex"; docker logs guttex 2>&1 | tail -40 || true
+            echo "--- upstream"; docker logs upstream 2>&1 | tail -20 || true
+          }
+          trap 'dump; docker rm -f guttex upstream >/dev/null 2>&1 || true; docker volume rm guttex-ci-projects >/dev/null 2>&1 || true; docker network rm "$net" >/dev/null 2>&1 || true' EXIT
+
+          ok=0
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8088/ >/dev/null 2>&1; then ok=1; break; fi
+            sleep 1
+          done
+          [ "$ok" = 1 ] || { echo "the app never served a page"; exit 1; }
+          echo "serving"
+
+          # The image's own checks, run against itself.
+          docker exec guttex /usr/local/bin/verify.sh
+
+          # The proxy. `/api/v1/health` must land upstream as `/v1/health`.
+          echoed="$(curl -fsS http://127.0.0.1:8088/api/v1/health)"
+          echo "upstream saw: ${echoed}"
+          case "$echoed" in
+            *'"seen_path":"/v1/health"'*) echo "path rewrite ok" ;;
+            *) echo "the /api prefix was not stripped"; exit 1 ;;
+          esac
+          case "$echoed" in
+            *'"seen_auth":"Bearer ci-token-not-a-secret"'*) echo "token attached server-side" ;;
+            *) echo "the bearer token did not reach upstream"; exit 1 ;;
+          esac
+
+          # ...and it must not be in anything the browser downloads.
+          if curl -fsS http://127.0.0.1:8088/ | grep -q 'ci-token-not-a-secret'; then
+            echo "the token appears in the served HTML"; exit 1
+          fi
+          echo "smoke test passed"
+        env:
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+
+      - name: Log in to GitHub Container Registry
+        if: needs.determine-version.outputs.publish == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push multi-arch
+        if: needs.determine-version.outputs.publish == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ needs.determine-version.outputs.version }}
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Summary
+        run: |
+          V="${{ needs.determine-version.outputs.version }}"
+          IMG="${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}"
+          echo "**Version:** \`${V}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Published:** ${{ needs.determine-version.outputs.publish }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Image:** \`${IMG}:${V}\` (linux/amd64, linux/arm64)" >> $GITHUB_STEP_SUMMARY
+
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    needs: [check, determine-version, build-and-push]
+    if: needs.determine-version.outputs.publish == 'true'
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Package what you need to run it
+        # There are no binaries to ship: guttex is the image. What a user
+        # actually needs is the compose file, pinned to this release rather
+        # than to whatever `:dev` happens to be on their disk.
+        run: |
+          set -eu
+          V="${{ needs.determine-version.outputs.version }}"
+          IMG="${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}"
+          mkdir -p dist
+          sed -e "s|^\( *\)image: guttex:dev|\1image: ${IMG}:${V}|" \
+              -e "/^ *build:/,/^ *dockerfile:/d" \
+              docker-compose.yml > dist/docker-compose.yml
+          grep -q "${IMG}:${V}" dist/docker-compose.yml
+          if grep -q "build:" dist/docker-compose.yml; then
+            echo "the build stanza survived the rewrite"; exit 1
+          fi
+          sha256sum dist/docker-compose.yml | tee dist/checksums.txt
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/docker-compose.yml
+            dist/checksums.txt
+          generate_release_notes: true
+
+      - name: Summary
+        run: |
+          V="${{ needs.determine-version.outputs.version }}"
+          IMG="${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}"
+          echo "**Release:** \`${V}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Run it:** \`curl -LO <the compose file> && docker compose up -d\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "The compose file pins \`${IMG}:${V}\` and pulls ghidra-rest alongside it. Only the UI is published; the analyser stays on the compose network." >> $GITHUB_STEP_SUMMARY

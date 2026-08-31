@@ -14,6 +14,7 @@
 	import { session } from '$lib/state/session.svelte';
 	import { callGraphView as cg } from '$lib/state/callgraph.svelte';
 	import { dispName } from '$lib/state/renames.svelte';
+	import { book } from '$lib/state/book.svelte';
 	import { displayAddr, normAddr } from '$lib/format';
 	import { layered, type Layout } from '$lib/graph/layout';
 	import { buildTree } from '$lib/graph/callgraph';
@@ -24,7 +25,13 @@
 
 	$effect(() => {
 		const job = session.id;
-		untrack(() => cg.ensure(job));
+		untrack(() => {
+			cg.ensure(job);
+			// The tree is built from the function list, which has no row for an
+			// imported function -- those hang off it as `external:a0` with
+			// nothing but the address. The import table is what names them.
+			book.externals(job);
+		});
 	});
 
 	let opened = $derived(new Set(cg.open));
@@ -157,17 +164,21 @@
 
 				{#each tree.nodes as n (n.id)}
 					{@const p = layout.nodes.get(n.id)}
+					<!-- An import has no function entry, so the tree only knows its
+					     thunk address; the book supplies the name. -->
+					{@const nm = book.nameOf(session.id, n.addr) ?? n.name}
+					{@const ext = n.ext || n.addr.includes(':')}
 					<div
 						class="gnode"
 						class:open={opened.has(n.id)}
-						class:ext={n.ext}
+						class:ext
 						class:recursive={n.recursive}
 						class:cursor={n.addr === normAddr(session.addr)}
 						style:left="{p?.x ?? 0}px"
 						style:top="{p?.y ?? 0}px"
 						use:reg={n.id}
 						data-addr={n.addr}
-						data-name={n.name}
+						data-name={nm}
 					>
 						<button
 							class="knob"
@@ -179,11 +190,11 @@
 						</button>
 						<button
 							class="label"
-							title="open {dispName(session.project, n.addr, n.name)}"
+							title="open {dispName(session.project, n.addr, nm)}"
 							ondblclick={() => session.select(n.addr, 'graph')}
 							onclick={() => n.kids && toggle(n.id)}
 						>
-							<span class="nm">{dispName(session.project, n.addr, n.name)}</span>
+							<span class="nm">{dispName(session.project, n.addr, nm)}</span>
 							<span class="ad mono">{displayAddr(n.addr)}</span>
 							{#if n.kids}<span class="kids">{n.kids}</span>{/if}
 						</button>

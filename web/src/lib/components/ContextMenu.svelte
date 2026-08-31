@@ -12,12 +12,17 @@
 	import { session } from '$lib/state/session.svelte';
 	import { device } from '$lib/state/device.svelte';
 	import { asmSel, type CopyKind } from '$lib/state/asmsel.svelte';
+	import { asmMark } from '$lib/state/asmmark.svelte';
 	import { dispName, localName } from '$lib/state/renames.svelte';
 	import { renameLocal, renameSymbol } from '$lib/rename';
 
 	// `ident` is set for a decompiler identifier that resolved to no address --
 	// a local. It can be renamed, but there is nothing to open or copy a link to.
-	type Target = { x: number; y: number; addr: string; name: string; ident?: string };
+	//
+	// `line` is set anywhere inside a decompiled line, address or not. A line of
+	// C is a target in its own right: it has instructions behind it even when
+	// the token under the pointer is punctuation.
+	type Target = { x: number; y: number; addr: string; name: string; ident?: string; line?: number };
 
 	let menu = $state<Target | null>(null);
 	let el = $state<HTMLElement | null>(null);
@@ -26,14 +31,16 @@
 	// Rows a copy would take: the highlighted block, or the single row that was
 	// right-clicked. Zero when the target is not a listing row at all, which is
 	// what hides the copy items on a function or xref row.
-	const selCount = $derived(menu && !menu.ident ? asmSel.rows(menu.addr).length : 0);
+	const selCount = $derived(menu && menu.addr && !menu.ident ? asmSel.rows(menu.addr).length : 0);
 	// what the rest of the UI shows for this thing, renames included
 	const shownName = $derived(
 		!menu
 			? ''
 			: menu.ident
 				? localName(session.project, session.addr, menu.ident)
-				: dispName(session.project, menu.addr, menu.name)
+				: menu.addr
+					? dispName(session.project, menu.addr, menu.name)
+					: ''
 	);
 
 	$effect(() => {
@@ -46,20 +53,30 @@
 			const el = e.target as HTMLElement | null;
 			const hit = el?.closest?.('[data-addr]') as HTMLElement | null;
 			const addr = normAddr(hit?.dataset.addr ?? '');
+			// the decompiled line the pointer is on, if it is on one
+			const lineHit = el?.closest?.('[data-line]') as HTMLElement | null;
+			const line = Number(lineHit?.dataset.line ?? '') || undefined;
 			if (!addr) {
 				// a decompiled identifier with no symbol behind it: still renameable
 				const idHit = el?.closest?.('[data-id]') as HTMLElement | null;
 				const ident = idHit?.dataset.id ?? '';
-				if (!ident) {
+				if (!ident && !line) {
 					menu = null;
 					return; // not ours: native menu
 				}
 				e.preventDefault();
-				menu = { x: e.clientX, y: e.clientY, addr: '', name: ident, ident };
+				menu = {
+					x: e.clientX,
+					y: e.clientY,
+					addr: '',
+					name: ident,
+					ident: ident || undefined,
+					line
+				};
 				return;
 			}
 			e.preventDefault();
-			menu = { x: e.clientX, y: e.clientY, addr, name: hit?.dataset.name ?? '' };
+			menu = { x: e.clientX, y: e.clientY, addr, name: hit?.dataset.name ?? '', line };
 		};
 		window.addEventListener('contextmenu', onMenu);
 		return () => window.removeEventListener('contextmenu', onMenu);
@@ -138,6 +155,34 @@
 	}
 
 	/**
+	 * Mark the instructions behind a decompiled line and show them. The
+	 * decompiler owns the mapping; this only asks for it. A line that Ghidra
+	 * mapped to nothing says so rather than switching to a listing that would
+	 * look unchanged.
+	 */
+	async function toAsm(line: number) {
+		if (await asmMark.goto(line)) session.tab = 'disasm';
+		else plugins.notify('guttex', `line ${line} maps to no instructions`, 'warn');
+	}
+
+	/**
+	 * The same move from the graph. An instruction inside the function on
+	 * screen is marked and the *function* is opened -- the listing is fetched
+	 * per function, so selecting the instruction's own address would ask for a
+	 * function that does not start there and land on "not a function address".
+	 * A target that leaves the function is a plain navigation.
+	 */
+	function toAsmAddr(t: Target) {
+		const sc = asmMark.scope;
+		if (sc?.has(t.addr)) {
+			asmMark.set(sc.fn, 0, [t.addr], 'graph');
+			session.select(sc.fn, 'disasm');
+		} else {
+			session.select(t.addr, 'disasm');
+		}
+	}
+
+	/**
 	 * Close, then act on the target we captured *before* closing. Reading
 	 * `menu` inside the callback would dereference null -- the menu is already
 	 * gone by then.
@@ -159,20 +204,36 @@
 		tabindex="-1"
 	>
 		<div class="head mono">
-			{menu.ident ? shownName : displayAddr(menu.addr) + (shownName ? ` ${shownName}` : '')}
+			{#if menu.ident}
+				{shownName}
+			{:else if menu.addr}
+				{displayAddr(menu.addr) + (shownName ? ` ${shownName}` : '')}
+			{:else}
+				line {menu.line}
+			{/if}
 		</div>
-		<button
-			role="menuitem"
-			onclick={() =>
-				act((t) =>
-					t.ident
-						? renameLocal(session.project, session.addr, t.ident)
-						: renameSymbol(session.project, t.addr, t.name)
-				)}
-		>
-			rename{menu.ident ? ' variable' : ''}<span class="key">n</span>
-		</button>
-		{#if !menu.ident}
+		{#if menu.ident || menu.addr}
+			<button
+				role="menuitem"
+				onclick={() =>
+					act((t) =>
+						t.ident
+							? renameLocal(session.project, session.addr, t.ident)
+							: renameSymbol(session.project, t.addr, t.name)
+					)}
+			>
+				rename{menu.ident ? ' variable' : ''}<span class="key">n</span>
+			</button>
+		{/if}
+		{#if menu.line}
+			<button role="menuitem" onclick={() => act((t) => toAsm(t.line!))}>
+				go to disassembly
+			</button>
+		{/if}
+		{#if menu.addr && !menu.line && session.tab !== 'disasm'}
+			<button role="menuitem" onclick={() => act(toAsmAddr)}>go to disassembly</button>
+		{/if}
+		{#if menu.addr}
 			<div class="sep"></div>
 			<button role="menuitem" onclick={() => act((t) => session.select(t.addr))}>open</button>
 			<button
@@ -189,7 +250,7 @@
 		{#if shownName}
 			<button role="menuitem" onclick={() => copy(shownName)}>copy name</button>
 		{/if}
-		{#if !menu.ident}
+		{#if menu.addr}
 			<button role="menuitem" onclick={() => act((t) => copy(urlFor(t.addr)))}>copy link</button>
 		{/if}
 		{#if selCount}

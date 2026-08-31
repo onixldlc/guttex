@@ -10,8 +10,9 @@
 	import { displayAddr } from '$lib/format';
 	import { mnemonicClass, tokenizeAsm } from '$lib/asmtok';
 	import { asmSel } from '$lib/state/asmsel.svelte';
+	import { asmMark } from '$lib/state/asmmark.svelte';
 	import { aliasName, dispName } from '$lib/state/renames.svelte';
-	import { book, operandName } from '$lib/state/book.svelte';
+	import { book, namedFlow, operandName } from '$lib/state/book.svelte';
 
 	let data = $state<DisasmListing | null>(null);
 	let loading = $state(false);
@@ -65,6 +66,43 @@
 		return () => {
 			stale = true;
 		};
+	});
+
+	// Instructions the decompiler sent over, if they are about the function on
+	// screen. Marks taken in another function are kept but not honoured: walk
+	// back to it and they light up again.
+	let marked = $derived(asmMark.owns(data?.address));
+
+	// Land on them rather than somewhere in the middle of the listing.
+	//
+	// Deliberately not `scrollIntoView`: the tab switch, the listing fetch and
+	// the first paint all land within a few frames of each other, and a smooth
+	// scroll started against a panel whose rows are still being laid out gets
+	// clamped straight back to the top -- which is what it did. Wait for the
+	// panel to have a height and the row to exist, then set `scrollTop` once.
+	let bodyEl = $state<HTMLElement | undefined>();
+
+	function center() {
+		let tries = 0;
+		const step = () => {
+			const box = bodyEl;
+			const row = tableEl?.querySelector('tr.marked') as HTMLElement | null;
+			if (!box || !row || !box.clientHeight) {
+				if (tries++ < 60) requestAnimationFrame(step);
+				return;
+			}
+			const delta = row.getBoundingClientRect().top - box.getBoundingClientRect().top;
+			box.scrollTop += delta - Math.max(0, (box.clientHeight - row.offsetHeight) / 2);
+		};
+		requestAnimationFrame(step);
+	}
+
+	$effect(() => {
+		const rows = data?.instructions?.length ?? 0;
+		// `addrs` is a fresh array on every send, so asking for the same line
+		// twice re-centres instead of doing nothing.
+		if (!marked || !rows || !asmMark.addrs.length) return;
+		center();
 	});
 
 	// Rows the current text selection spans. The browser only paints the glyphs
@@ -137,6 +175,14 @@
 			<span class="dim">{data.count} instructions</span>
 			{#if data.truncated}<span class="err">truncated</span>{/if}
 			<span class="spacer"></span>
+			{#if marked}
+				<button
+					class="flat mark"
+					title="clear the marked instructions"
+					onclick={() => asmMark.clear()}
+					>from {asmMark.label} &times;
+				</button>
+			{/if}
 			<label class="opt"><input type="checkbox" bind:checked={showNames} /> names</label>
 			<label class="opt"><input type="checkbox" bind:checked={showBytes} /> bytes</label>
 		{:else}
@@ -144,7 +190,7 @@
 		{/if}
 	</div>
 
-	<div class="panel-body code">
+	<div class="panel-body code" bind:this={bodyEl}>
 		{#if loading}
 			<p class="empty">reading listing...</p>
 		{:else if error}
@@ -155,6 +201,7 @@
 					{#each data.instructions as ins, i (ins.address)}
 						<tr
 							class:current={ins.address === cursor}
+							class:marked={marked && asmMark.has(ins.address)}
 							class:inrange={i >= selLo && i <= selHi}
 							aria-selected={ins.address === cursor}
 							data-i={i}
@@ -174,7 +221,7 @@
 											session.select(ins.flow!, 'disasm');
 										}}
 									>
-										{@render ops(ins.operands, ins.is_call ? ins.flow : undefined)}
+										{@render ops(ins.operands, namedFlow(ins))}
 									</button>
 								{:else}
 									{@render ops(ins.operands)}
@@ -251,6 +298,23 @@
 	   when it falls inside a multi-row selection. */
 	table.asm tbody tr.inrange.current {
 		background: linear-gradient(var(--row-range), var(--row-range)), var(--bg-elev);
+	}
+	/* Instructions behind one line of C. Deliberately not the selection blue:
+	   this is the decompiler talking, and both can be on screen at once. */
+	table.asm tbody tr.marked,
+	table.asm tbody tr.marked:hover {
+		background: var(--row-mark);
+	}
+	table.asm tbody tr.marked.current {
+		background: linear-gradient(var(--row-mark), var(--row-mark)), var(--bg-elev);
+	}
+	/* The set is usually contiguous, so a stripe down the gutter reads as one
+	   block rather than a run of separately tinted rows. */
+	table.asm tbody tr.marked .a {
+		box-shadow: inset 2px 0 0 var(--mark-edge);
+	}
+	.mark {
+		color: var(--mark-edge);
 	}
 	.a {
 		color: var(--ec-offset);

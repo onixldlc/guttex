@@ -45,6 +45,13 @@ ENV NODE_ENV=production \
     BODY_SIZE_LIMIT=1024M \
     GHIDRAREST_URL=http://127.0.0.1:8080
 
+# Create it in the image, owned by the runtime user. A fresh named volume is
+# seeded from the image's directory, permissions included -- without this it
+# lands root-owned, `node` cannot write, and entrypoint.sh stops the container
+# on its own writability check. Podman hides the bug by chowning new volumes to
+# USER; docker does not, so the compose file only worked on one of them.
+RUN mkdir -p /projects && chown node:node /projects
+
 # Everything guttex remembers. Mount it, or the renames die with the container.
 VOLUME ["/projects"]
 
