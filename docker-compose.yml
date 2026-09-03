@@ -32,10 +32,7 @@ services:
       retries: 3
 
   guttex:
-    image: guttex:dev
-    build:
-      context: .
-      dockerfile: docker/Dockerfile
+    image: ghcr.io/onixldlc/guttex:latest
     container_name: guttex
     restart: unless-stopped
     depends_on:
@@ -43,7 +40,7 @@ services:
     ports:
       # Loopback by default. Anyone who reaches the UI reaches ghidra-rest
       # through it, with the token already attached.
-      - "127.0.0.1:8088:8080"
+      - "8080:8080"
     environment:
       # Service name on the compose network, not localhost.
       GHIDRAREST_URL: "http://ghidra-rest:8080"
