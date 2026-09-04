@@ -44,8 +44,45 @@ async function json<T>(path: string, init?: RequestInit): Promise<T> {
 	return (await res.json()) as T;
 }
 
+export type AsmLine = { addr: string; text: string; size: number };
+
+/** what `/asm` answers: bytes, or instructions, or why neither happened */
+export type AsmAnswer = {
+	ok: boolean;
+	error?: string;
+	hex?: string;
+	bytes?: number;
+	lines?: AsmLine[];
+	trailing?: number;
+};
+
+export type AsmAsk = {
+	/** `asm` = assemble `text`, `hex` = disassemble it */
+	mode: 'asm' | 'hex';
+	text: string;
+	/** where the bytes will land -- relative branches depend on it */
+	addr?: string;
+	language?: string;
+	processor?: string;
+	bits?: number;
+	endian?: 'little' | 'big';
+	thumb?: boolean;
+};
+
 export const store = {
 	health: () => json<{ status: string; projects: string }>('/health'),
+
+	/**
+	 * Assemble or disassemble one patch's worth of code. Both directions live
+	 * on the server because that is where keystone and capstone are; the editor
+	 * calls this on every keystroke to fill its preview box.
+	 */
+	translate: (ask: AsmAsk) =>
+		json<AsmAnswer>('/asm', {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify(ask)
+		}),
 	list: () => json<{ count: number; items: ProjectMeta[] }>('/projects'),
 
 	/** create on first open, and keep the binary's name on the project card */
@@ -87,6 +124,18 @@ export const store = {
 	 */
 	exportUrl: (id: string, job?: string) =>
 		`${BASE}/projects/${id}/export${job ? `?job=${encodeURIComponent(job)}` : ''}`,
+
+	/**
+	 * The binary itself: `original` as submitted, `patched` with the project's
+	 * byte patches applied to a copy on the way out. `base` is Ghidra's image
+	 * base, which the server needs to turn patch addresses into file offsets.
+	 */
+	binaryUrl: (id: string, variant: 'original' | 'patched', job?: string, base?: string) => {
+		const q = new URLSearchParams({ variant });
+		if (job) q.set('job', job);
+		if (base) q.set('base', base.replace(/^0x/i, ''));
+		return `${BASE}/projects/${id}/binary?${q}`;
+	},
 
 	/**
 	 * Take one back. Lands under the binary's hash, so it meets its binary.

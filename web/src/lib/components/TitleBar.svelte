@@ -3,9 +3,60 @@
 	import { session } from '$lib/state/session.svelte';
 	import { exporter } from '$lib/state/exporter.svelte';
 	import { progress } from '$lib/state/progress.svelte';
+	import { renames } from '$lib/state/renames.svelte';
 	import { displayAddr, fmtBytes, shortId } from '$lib/format';
 
 	let jump = $state('');
+
+	// The brand is the menu. Export and Console used to be their own buttons;
+	// on a narrow window they were the first things pushed off the edge, so
+	// everything that is not about the current address now lives under one
+	// trigger that is always there anyway.
+	let menuOpen = $state(false);
+	// "export binary" expands in place rather than flying out a submenu:
+	// two more rows are cheaper to hit (and possible on touch) than a nested
+	// hover target.
+	let binOpen = $state(false);
+	let box = $state<HTMLDivElement | null>(null);
+
+	$effect(() => {
+		if (!menuOpen) return;
+		const onDown = (e: MouseEvent) => {
+			if (box && !box.contains(e.target as Node)) close();
+		};
+		const onKey = (e: KeyboardEvent) => {
+			if (e.key === 'Escape') close();
+		};
+		document.addEventListener('mousedown', onDown);
+		document.addEventListener('keydown', onKey);
+		return () => {
+			document.removeEventListener('mousedown', onDown);
+			document.removeEventListener('keydown', onKey);
+		};
+	});
+
+	function close() {
+		menuOpen = false;
+		binOpen = false;
+	}
+
+	function exportProject() {
+		close();
+		exporter.run(session.project, session.id);
+	}
+
+	function exportBinary(variant: 'original' | 'patched') {
+		close();
+		exporter.runBinary(session.project, variant, session.id, session.summary?.image_base);
+	}
+
+	function toggleConsole() {
+		close();
+		session.consoleOpen = !session.consoleOpen;
+		if (session.consoleOpen) session.refreshLog();
+	}
+
+	const patchCount = $derived(session.project ? renames.patchCount(session.project) : 0);
 
 	async function go(e: SubmitEvent) {
 		e.preventDefault();
@@ -24,7 +75,73 @@
 </script>
 
 <header class="bar">
-	<a class="brand" href="/">guttex</a>
+	<div class="menuwrap" bind:this={box}>
+		<button
+			class="brand"
+			aria-expanded={menuOpen}
+			aria-haspopup="menu"
+			onclick={() => (menuOpen ? close() : (menuOpen = true))}
+		>
+			guttex<span class="caret" aria-hidden="true">▾</span>
+		</button>
+		{#if menuOpen}
+			<ul class="menu" role="menu">
+				<li><a class="flat item" role="menuitem" href="/" onclick={close}>home</a></li>
+				<li>
+					<button
+						class="flat item"
+						role="menuitem"
+						disabled={!session.project || exporter.busy}
+						title="the whole project as one file: names, patches, metadata and the analysis artifacts"
+						onclick={exportProject}
+					>
+						{exporter.busy ? 'exporting...' : 'export project'}
+					</button>
+				</li>
+				<li>
+					<button
+						class="flat item"
+						role="menuitem"
+						aria-expanded={binOpen}
+						disabled={!session.project || exporter.busy}
+						onclick={() => (binOpen = !binOpen)}
+					>
+						export binary<span class="caret" aria-hidden="true">{binOpen ? '▾' : '▸'}</span>
+					</button>
+					{#if binOpen}
+						<ul class="submenu">
+							<li>
+								<button
+									class="flat item sub"
+									role="menuitem"
+									title="the binary exactly as it was submitted"
+									onclick={() => exportBinary('original')}
+								>
+									original
+								</button>
+							</li>
+							<li>
+								<button
+									class="flat item sub"
+									role="menuitem"
+									disabled={!patchCount}
+									title="a copy of the binary with this project's byte patches applied"
+									onclick={() => exportBinary('patched')}
+								>
+									current{patchCount ? ` (${patchCount} patch${patchCount === 1 ? '' : 'es'})` : ' (no patches)'}
+								</button>
+							</li>
+						</ul>
+					{/if}
+				</li>
+				<li>
+					<button class="flat item" role="menuitem" class:on={session.consoleOpen} onclick={toggleConsole}>
+						console
+					</button>
+				</li>
+			</ul>
+		{/if}
+	</div>
 
 	<span class="file" title={session.title}>{session.title}</span>
 
@@ -64,34 +181,13 @@
 		>
 		<button class="flat" onclick={cancel}>Cancel</button>
 	{/if}
-	<!-- One file: the names and Ghidra's artifacts together. Two buttons meant
-	     pairing two downloads up by hand on the other machine.
-
-	     Not an <a download>: packing can take a while on a project whose
-	     artifacts have not been pulled yet, and a link that looks inert gets
-	     clicked ten times. `exporter` runs one at a time and says so. -->
-	<button
-		class="btn"
-		onclick={() => exporter.run(session.project, session.id)}
-		disabled={exporter.busy}
-		title="the whole project as one file: names, metadata and the analysis artifacts"
-		>{exporter.busy ? 'Exporting...' : 'Export'}</button
-	>
-	<button
-		class="flat"
-		class:on={session.consoleOpen}
-		onclick={() => {
-			session.consoleOpen = !session.consoleOpen;
-			if (session.consoleOpen) session.refreshLog();
-		}}>Console</button
-	>
 	<span class="jid mono" title={session.id}>{shortId(session.id)}</span>
 </header>
 
 <style>
 	.bar {
 		display: flex;
-		overflow: hidden;
+		overflow: visible;
 		align-items: center;
 		gap: 8px;
 		height: 38px;
@@ -100,16 +196,79 @@
 		background: var(--bg-head);
 		border-bottom: 1px solid var(--border);
 	}
+	.menuwrap {
+		position: relative;
+		display: flex;
+		align-self: stretch;
+		align-items: center;
+		padding-right: 6px;
+		border-right: 1px solid var(--border);
+	}
 	.brand {
 		font-weight: 600;
 		letter-spacing: 0.04em;
 		color: var(--fg);
-		padding-right: 6px;
-		border-right: 1px solid var(--border);
+		background: none;
+		border: 0;
+		padding: 4px 2px;
+		cursor: pointer;
+		font-size: inherit;
+		font-family: inherit;
+		display: flex;
+		align-items: center;
+		gap: 4px;
 	}
-	.brand:hover {
+	.brand:hover,
+	.brand[aria-expanded='true'] {
 		color: var(--accent);
+	}
+	.caret {
+		font-size: 9px;
+		color: var(--fg-faint);
+	}
+	.menu,
+	.submenu {
+		list-style: none;
+		margin: 0;
+		padding: 4px;
+	}
+	.menu {
+		position: absolute;
+		top: 100%;
+		left: 0;
+		z-index: 60;
+		min-width: 180px;
+		background: var(--bg-elev);
+		border: 1px solid var(--border);
+		border-radius: 4px;
+		box-shadow: 0 6px 18px rgb(0 0 0 / 45%);
+	}
+	.submenu {
+		padding: 0 0 2px;
+	}
+	.item {
+		width: 100%;
+		justify-content: flex-start;
+		text-align: left;
+		text-transform: none;
+		letter-spacing: 0;
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+	a.item {
+		color: var(--fg);
+		padding: 3px 8px;
+	}
+	a.item:hover {
 		text-decoration: none;
+		background: var(--bg-panel);
+	}
+	.item.sub {
+		padding-left: 22px;
+	}
+	.item .caret {
+		margin-left: auto;
 	}
 	.file {
 		font-family: var(--mono);

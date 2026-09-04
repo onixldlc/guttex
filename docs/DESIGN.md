@@ -40,7 +40,8 @@ projects path cannot be shipped to a browser by accident.
 ```
 $GUTTEX_PROJECTS/<sha256 of the binary>/
     meta.json           name, timestamps, revision, rename count, last job id
-    annotations.json    { symbols: {addr: entry}, locals: {"fn:ident": entry} }
+    annotations.json    { symbols: {addr: entry}, locals: {"fn:ident": entry},
+                          patches: {addr: {changes: "a1 a1 a1 a1"}} }
     ghidra-export.zip   ghidra-rest's artifact set
 ```
 
@@ -88,7 +89,21 @@ won", not corruption. A vector clock would be the fix if that ever bites.
 ## Endpoint split
 
 - `/api/v1/*` -- proxied to ghidra-rest untouched (results, logs, export).
-- `/api/guttex/v1/projects...` -- projects, annotations, archive, export/import.
+- `/api/guttex/v1/projects...` -- projects, annotations, archive, export/import,
+  and `/binary?variant=original|patched` -- the submitted binary back out, as-is
+  or with the patch list applied to a copy in memory (`$lib/server/patchmap`
+  turns Ghidra addresses into file offsets via the ELF/PE headers). The stored
+  original is never modified.
+- `/api/guttex/v1/asm` -- assemble or disassemble one patch's worth of code, for
+  the editor's preview box. Keystone and Capstone are WASM and run inside the
+  guttex Node process, so this is the one guttex endpoint that is neither a
+  project nor a proxy. Ghidra has no assembler behind ghidra-rest, which is why
+  it is here at all. A bad mnemonic answers `200 {ok:false,error}` -- it is the
+  user talking to the assembler, not a fault.
+
+What the editor stores is always hex: assembly typed into it is assembled first,
+then written to `patches` as bytes. The patch log holds bytes and an address and
+nothing else, so nothing in it needs an assembler to be read back.
 
 The overlay is done in the client, not the server: results come from ghidra-rest
 and names are resolved at render time, by address where an address is in hand

@@ -8,8 +8,9 @@
 import type { Instruction } from '$lib/api/types';
 import { displayAddr, normAddr } from '$lib/format';
 
-/** `full` = as displayed, `hex` = byte column only, `asm` = everything but bytes. */
-export type CopyKind = 'full' | 'hex' | 'asm';
+/** `full` = as displayed, `addr` = address column only, `hex` = byte column
+    only, `asm` = the instructions alone -- no addresses, no bytes. */
+export type CopyKind = 'full' | 'addr' | 'hex' | 'asm';
 
 class AsmSelection {
 	/** every instruction in the listing on screen */
@@ -40,13 +41,14 @@ class AsmSelection {
 	format(kind: CopyKind, addr?: string): string {
 		const rows = this.rows(addr);
 		if (!rows.length) return '';
+		if (kind === 'addr') return rows.map((i) => displayAddr(i.address)).join('\n');
 		if (kind === 'hex') return rows.map((i) => i.bytes ?? '').join('\n');
 
 		const withBytes = kind === 'full' && this.bytes;
 		const cells = rows.map(
 			(i) =>
 				[
-					displayAddr(i.address),
+					kind === 'asm' ? null : displayAddr(i.address),
 					withBytes ? (i.bytes ?? '') : null,
 					i.mnemonic ?? '',
 					i.operands ?? '',

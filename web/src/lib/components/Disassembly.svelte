@@ -11,6 +11,7 @@
 	import { mnemonicClass, tokenizeAsm } from '$lib/asmtok';
 	import { asmSel } from '$lib/state/asmsel.svelte';
 	import { asmMark } from '$lib/state/asmmark.svelte';
+	import { patchView } from '$lib/state/patchview.svelte';
 	import { aliasName, dispName } from '$lib/state/renames.svelte';
 	import { book, namedFlow, operandName } from '$lib/state/book.svelte';
 
@@ -68,6 +69,11 @@
 		};
 	});
 
+	// What is actually drawn: Ghidra's listing with the project's patches
+	// decoded over it. Every row index below -- the cursor, the selection, the
+	// copy -- is an index into this, not into what the server sent.
+	const view = $derived(patchView.apply(session.project, data?.instructions ?? []));
+
 	// Instructions the decompiler sent over, if they are about the function on
 	// screen. Marks taken in another function are kept but not honoured: walk
 	// back to it and they light up again.
@@ -98,7 +104,7 @@
 	}
 
 	$effect(() => {
-		const rows = data?.instructions?.length ?? 0;
+		const rows = view.lines.length;
 		// `addrs` is a fresh array on every send, so asking for the same line
 		// twice re-centres instead of doing nothing.
 		if (!marked || !rows || !asmMark.addrs.length) return;
@@ -121,7 +127,7 @@
 		// An endpoint outside the table means the drag ran off the top or bottom
 		// edge; clamp it to whichever end of the listing it sits past.
 		const pos = tableEl.compareDocumentPosition(node);
-		const rows = data?.instructions?.length ?? 0;
+		const rows = view.lines.length;
 		if (pos & Node.DOCUMENT_POSITION_PRECEDING) return 0;
 		if (pos & Node.DOCUMENT_POSITION_FOLLOWING) return rows - 1;
 		return null;
@@ -150,7 +156,7 @@
 	// Publish what is lit so the right-click menu can copy it. The menu is a
 	// separate, global component -- it has no other way to see the listing.
 	$effect(() => {
-		asmSel.lines = data?.instructions ?? [];
+		asmSel.lines = view.lines;
 		asmSel.lo = selLo;
 		asmSel.hi = selHi;
 		asmSel.bytes = showBytes;
@@ -174,6 +180,16 @@
 			<span class="addr">{displayAddr(data.address)}</span>
 			<span class="dim">{data.count} instructions</span>
 			{#if data.truncated}<span class="err">truncated</span>{/if}
+			{#if view.hot.size}
+				<span
+					class="patched"
+					title="guttex decoded these rows, not ghidra -- the decompiler and the graphs still show the original bytes"
+					>patched</span
+				>
+			{:else if view.busy}
+				<span class="dim">decoding patch...</span>
+			{/if}
+			{#if view.error}<span class="err">{view.error}</span>{/if}
 			<span class="spacer"></span>
 			{#if marked}
 				<button
@@ -195,16 +211,18 @@
 			<p class="empty">reading listing...</p>
 		{:else if error}
 			<p class="empty err">{error}</p>
-		{:else if data?.instructions?.length}
+		{:else if view.lines.length}
 			<table class="asm" bind:this={tableEl}>
 				<tbody>
-					{#each data.instructions as ins, i (ins.address)}
+					{#each view.lines as ins, i (ins.address)}
 						<tr
 							class:current={ins.address === cursor}
+							class:hot={view.hot.has(ins.address)}
 							class:marked={marked && asmMark.has(ins.address)}
 							class:inrange={i >= selLo && i <= selHi}
 							aria-selected={ins.address === cursor}
 							data-i={i}
+							data-asm={ins.address}
 							data-addr={ins.address}
 							onclick={() => (cursor = ins.address)}
 						>
@@ -315,6 +333,19 @@
 	}
 	.mark {
 		color: var(--mark-edge);
+	}
+	/* A patched row: guttex's own decode of bytes Ghidra never saw. The gutter
+	   stripe is the same idea as the marked block -- this row came from
+	   somewhere else -- in the accent the hex view already uses for patches. */
+	table.asm tbody tr.hot .a {
+		box-shadow: inset 2px 0 0 var(--accent);
+	}
+	table.asm tbody tr.hot .b {
+		color: var(--accent);
+	}
+	.patched {
+		color: var(--accent);
+		font-size: 11px;
 	}
 	.a {
 		color: var(--ec-offset);

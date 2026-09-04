@@ -36,12 +36,33 @@ export type Doc = {
 	updated_at?: string;
 	symbols: Record<string, Entry>;
 	locals: Record<string, Entry>;
+	/** byte patches: `{ "1040d0": { changes: "a1 a1 a1 a1" } }`, nothing else */
+	patches: Record<string, Patch>;
 };
+
+export type Patch = { changes: string };
 
 const KEY = 'guttex.renames';
 const DEVICE_KEY = 'guttex.device';
 
-const blank = (job: string): Doc => ({ version: 1, job, rev: 0, symbols: {}, locals: {} });
+const blank = (job: string): Doc => ({
+	version: 1,
+	job,
+	rev: 0,
+	symbols: {},
+	locals: {},
+	patches: {}
+});
+
+/**
+ * `"a0B0"` / `"a0 b0"` -> `"a0 b0"`; empty string when it is not whole bytes.
+ * One canonical spelling, because these strings are compared and merged.
+ */
+export function normAob(aob: string): string {
+	const s = (aob ?? '').replace(/[\s,]+/g, '').toLowerCase();
+	if (!s || s.length % 2 || /[^0-9a-f]/.test(s)) return '';
+	return s.replace(/(..)(?=.)/g, '$1 ');
+}
 
 /** stable-ish name for this browser, so a sync can say where a rename came from */
 function deviceId(): string {
@@ -120,9 +141,55 @@ class Renames {
 
 	private edit(job: string, fn: (d: Doc) => void) {
 		const cur = this.doc(job);
-		const next: Doc = { ...cur, symbols: { ...cur.symbols }, locals: { ...cur.locals } };
+		const next: Doc = {
+			...cur,
+			symbols: { ...cur.symbols },
+			locals: { ...cur.locals },
+			patches: { ...(cur.patches ?? {}) }
+		};
 		fn(next);
 		this.put(job, next, true);
+	}
+
+	// ----------------------------------------------------------------- patches
+
+	/**
+	 * Record a patch: `changes` is the new bytes, and its length is the
+	 * patch -- `"a1 a1 a1 a1"` at 1040d0 overwrites that byte and the next
+	 * three. Nothing else is stored. The binary is never touched; the patch
+	 * is applied to a copy when the binary is exported.
+	 */
+	setPatch(job: string, addr: string, changes: string) {
+		const a = normAddr(addr);
+		if (!job || !a || !changes) return;
+		this.edit(job, (d) => {
+			d.patches[a] = { changes };
+		});
+	}
+
+	delPatch(job: string, addr: string) {
+		const a = normAddr(addr);
+		if (!this.doc(job).patches?.[a]) return;
+		this.edit(job, (d) => {
+			delete d.patches[a];
+		});
+	}
+
+	patchOf(job: string, addr: string): string | undefined {
+		void this.ver;
+		return this.docs[job]?.patches?.[normAddr(addr)]?.changes;
+	}
+
+	/** patches, addresses ascending, for the list and the hex overlay */
+	patchList(job: string): { addr: string; changes: string }[] {
+		void this.ver;
+		return Object.entries(this.doc(job).patches ?? {})
+			.map(([addr, e]) => ({ addr, changes: e.changes }))
+			.sort((x, y) => (BigInt('0x' + x.addr) < BigInt('0x' + y.addr) ? -1 : 1));
+	}
+
+	patchCount(job: string): number {
+		return this.patchList(job).length;
 	}
 
 	// ----------------------------------------------------------------- symbols
@@ -243,8 +310,10 @@ class Renames {
 			rev: remote.rev,
 			updated_at: remote.updated_at,
 			symbols: { ...cur.symbols },
-			locals: { ...cur.locals }
+			locals: { ...cur.locals },
+			patches: { ...(cur.patches ?? {}) }
 		};
+		if (!this.unsent[job]) next.patches = { ...(remote.patches ?? {}) };
 		let changed = false;
 		let owes = false;
 		for (const side of ['symbols', 'locals'] as const) {

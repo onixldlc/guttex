@@ -1,0 +1,69 @@
+# Whole stack: the analyser plus the UI in front of it.
+#
+#   podman-compose up -d        (or: docker compose up -d)
+#   open http://127.0.0.1:8088
+#
+# Only the UI is published. ghidra-rest stays on the compose network, which is
+# the point of the /api proxy: the browser never talks to it directly and the
+# API token never leaves this file.
+
+services:
+  ghidra-rest:
+    image: ghcr.io/onixldlc/ghidra-rest:latest
+    container_name: guttex-ghidra-rest
+    restart: unless-stopped
+    # Literal values on purpose. `${VAR:-default}` is a docker-compose feature;
+    # podman-compose passes the string through verbatim and the container ends
+    # up with a literal "${VAR:-default}".
+    environment:
+      GHIDRAREST_MAX_CONCURRENT: "2"
+      GHIDRAREST_JAVA_MAX_MEM: "2G"
+      GHIDRAREST_ANALYSIS_TIMEOUT: "30m"
+      GHIDRAREST_DECOMPILE: "true"
+      # Must match GHIDRAREST_TOKEN on guttex below.
+      GHIDRAREST_API_TOKEN: "guttex-local"
+    volumes:
+      - ghidra-rest-data:/data
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/verify.sh"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+  guttex:
+    image: ghcr.io/onixldlc/guttex:dev
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: guttex
+    restart: unless-stopped
+    depends_on:
+      - ghidra-rest
+    ports:
+      # Loopback by default. Anyone who reaches the UI reaches ghidra-rest
+      # through it, with the token already attached.
+      - "8080:8080"
+    environment:
+      # Service name on the compose network, not localhost.
+      GHIDRAREST_URL: "http://ghidra-rest:8080"
+      GHIDRAREST_TOKEN: "guttex-local"
+      BODY_SIZE_LIMIT: "1024M"
+      GUTTEX_PROJECTS: "/projects"
+    volumes:
+      # Projects: renames and archived artifacts. Everything guttex remembers
+      # is in here, so this is the volume you back up and the folder you copy
+      # to another machine.
+      - guttex-projects:/projects
+    healthcheck:
+      # Declared here as well as in the Dockerfile: podman drops the image
+      # HEALTHCHECK unless the image was built with `--format docker`.
+      test: ["CMD", "/usr/local/bin/verify.sh"]
+      interval: 30s
+      timeout: 5s
+      start_period: 5s
+      retries: 3
+
+volumes:
+  ghidra-rest-data:
+  guttex-projects:

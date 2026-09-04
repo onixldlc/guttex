@@ -15,6 +15,7 @@
 	import { asmMark } from '$lib/state/asmmark.svelte';
 	import { dispName, localName } from '$lib/state/renames.svelte';
 	import { renameLocal, renameSymbol } from '$lib/rename';
+	import { editAt } from '$lib/patch';
 
 	// `ident` is set for a decompiler identifier that resolved to no address --
 	// a local. It can be renamed, but there is nothing to open or copy a link to.
@@ -22,7 +23,19 @@
 	// `line` is set anywhere inside a decompiled line, address or not. A line of
 	// C is a target in its own right: it has instructions behind it even when
 	// the token under the pointer is punctuation.
-	type Target = { x: number; y: number; addr: string; name: string; ident?: string; line?: number };
+	// `row` is the address of the listing row the pointer is over, which is
+	// not always `addr`: right-clicking a jump operand inside a row targets the
+	// jump's destination, while the row itself is still the thing whose bytes
+	// would be edited.
+	type Target = {
+		x: number;
+		y: number;
+		addr: string;
+		name: string;
+		ident?: string;
+		line?: number;
+		row?: string;
+	};
 
 	let menu = $state<Target | null>(null);
 	let el = $state<HTMLElement | null>(null);
@@ -56,6 +69,10 @@
 			// the decompiled line the pointer is on, if it is on one
 			const lineHit = el?.closest?.('[data-line]') as HTMLElement | null;
 			const line = Number(lineHit?.dataset.line ?? '') || undefined;
+			// only the disassembly listing marks its rows, so this is also what
+			// says "we are in the listing"
+			const rowHit = el?.closest?.('[data-asm]') as HTMLElement | null;
+			const row = normAddr(rowHit?.dataset.asm ?? '') || undefined;
 			if (!addr) {
 				// a decompiled identifier with no symbol behind it: still renameable
 				const idHit = el?.closest?.('[data-id]') as HTMLElement | null;
@@ -76,7 +93,7 @@
 				return;
 			}
 			e.preventDefault();
-			menu = { x: e.clientX, y: e.clientY, addr, name: hit?.dataset.name ?? '', line };
+			menu = { x: e.clientX, y: e.clientY, addr, name: hit?.dataset.name ?? '', line, row };
 		};
 		window.addEventListener('contextmenu', onMenu);
 		return () => window.removeEventListener('contextmenu', onMenu);
@@ -212,7 +229,13 @@
 				line {menu.line}
 			{/if}
 		</div>
-		{#if menu.ident || menu.addr}
+		{#if menu.row && menu.row === menu.addr}
+			<!-- In the listing, an instruction's own row edits its bytes: the name
+			     of a thing is what the other views are for. -->
+			<button role="menuitem" onclick={() => act((t) => editAt(session.project, t.row!))}>
+				edit{selCount > 1 ? ` (${selCount} lines)` : ''}
+			</button>
+		{:else if menu.ident || menu.addr}
 			<button
 				role="menuitem"
 				onclick={() =>
@@ -250,19 +273,19 @@
 		{#if shownName}
 			<button role="menuitem" onclick={() => copy(shownName)}>copy name</button>
 		{/if}
-		{#if menu.addr}
-			<button role="menuitem" onclick={() => act((t) => copy(urlFor(t.addr)))}>copy link</button>
-		{/if}
 		{#if selCount}
 			<div class="sep"></div>
 			<button role="menuitem" onclick={() => act((t) => copyLines(t, 'full', 'listing'))}>
 				copy selection{selCount > 1 ? ` (${selCount} lines)` : ''}
 			</button>
+			<button role="menuitem" onclick={() => act((t) => copyLines(t, 'addr', 'addresses'))}>
+				copy selection address
+			</button>
 			<button role="menuitem" onclick={() => act((t) => copyLines(t, 'hex', 'bytes'))}>
-				copy hex
+				copy selection hex
 			</button>
 			<button role="menuitem" onclick={() => act((t) => copyLines(t, 'asm', 'asm'))}>
-				copy asm
+				copy selection asm
 			</button>
 		{/if}
 		<div class="sep"></div>

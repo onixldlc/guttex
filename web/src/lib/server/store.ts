@@ -54,7 +54,22 @@ export type Annotations = {
 	symbols: Record<string, Entry>;
 	/** keyed by `<function entry>:<original identifier>` */
 	locals: Record<string, Entry>;
+	/**
+	 * Byte patches, keyed by address, nothing else:
+	 *
+	 *     { "1040d0": { "changes": "a1 a1 a1 a1" } }
+	 *
+	 * means the byte at 1040d0 and the next three become a1 a1 a1 a1. The
+	 * length of `changes` is the length of the patch. The binary itself is
+	 * never modified -- patches are applied to a copy on export.
+	 *
+	 * Deliberately not an `Entry`: no timestamps, no device, no tombstones.
+	 * The map is replaced wholesale by whoever pushes it.
+	 */
+	patches: Record<string, Patch>;
 };
+
+export type Patch = { changes: string };
 
 export type Meta = {
 	/** sha256 of the binary; the project id */
@@ -67,6 +82,7 @@ export type Meta = {
 	updated_at: string;
 	rev: number;
 	renames: number;
+	patches?: number;
 	archived?: boolean;
 	archive_bytes?: number;
 };
@@ -91,7 +107,8 @@ const blank = (job: string): Annotations => ({
 	job,
 	rev: 0,
 	symbols: {},
-	locals: {}
+	locals: {},
+	patches: {}
 });
 
 // One writer at a time. Two people renaming things is not a write-heavy
@@ -129,7 +146,14 @@ async function writeJSON(path: string, value: unknown) {
 export async function annotations(id: string): Promise<Annotations> {
 	const a = await readJSON<Annotations>(join(dir(id), ANN));
 	if (!a) return blank(id);
-	return { ...blank(id), ...a, symbols: a.symbols ?? {}, locals: a.locals ?? {}, job: id };
+	return {
+		...blank(id),
+		...a,
+		symbols: a.symbols ?? {},
+		locals: a.locals ?? {},
+		patches: a.patches ?? {},
+		job: id
+	};
 }
 
 export async function meta(id: string): Promise<Meta> {
@@ -209,6 +233,7 @@ export function merge(id: string, patch: Partial<Annotations>): Promise<Annotati
 		let changed = false;
 		changed = mergeInto(cur.symbols, patch.symbols) || changed;
 		changed = mergeInto(cur.locals, patch.locals) || changed;
+		changed = replacePatches(cur, patch.patches) || changed;
 		if (!changed) return cur;
 
 		cur.version = FORMAT;
@@ -228,6 +253,7 @@ export function merge(id: string, patch: Partial<Annotations>): Promise<Annotati
 		};
 		m.rev = cur.rev;
 		m.renames = live(cur);
+		m.patches = Object.keys(cur.patches).length;
 		m.updated_at = now();
 		await writeJSON(join(dir(id), META), m);
 		return cur;
@@ -251,6 +277,31 @@ function mergeInto(dst: Record<string, Entry>, src?: Record<string, Entry>): boo
 function live(a: Annotations): number {
 	const n = (r: Record<string, Entry>) => Object.values(r).filter((e) => e.to !== '').length;
 	return n(a.symbols) + n(a.locals);
+}
+
+/**
+ * The pushed patch map replaces the stored one -- no per-key merge, because
+ * there is nothing to merge on: a patch is an address and its bytes, full
+ * stop. Removing a patch is removing the key. Absent (`undefined`) means the
+ * client did not talk about patches at all and the stored map stands.
+ */
+function replacePatches(cur: Annotations, next?: Record<string, Patch>): boolean {
+	if (!next || typeof next !== 'object') return false;
+	const clean: Record<string, Patch> = {};
+	for (const [k, v] of Object.entries(next)) {
+		if (v && typeof v.changes === 'string' && v.changes !== '') clean[k] = { changes: v.changes };
+	}
+	if (JSON.stringify(clean) === JSON.stringify(cur.patches)) return false;
+	cur.patches = clean;
+	return true;
+}
+
+/** patches by ascending address, for applying to an export */
+export function livePatches(a: Annotations): { addr: string; bytes: string }[] {
+	return Object.entries(a.patches)
+		.filter(([, e]) => typeof e?.changes === 'string' && e.changes !== '')
+		.map(([addr, e]) => ({ addr, bytes: e.changes }))
+		.sort((x, y) => (x.addr.padStart(16, '0') < y.addr.padStart(16, '0') ? -1 : 1));
 }
 
 export function remove(id: string): Promise<void> {

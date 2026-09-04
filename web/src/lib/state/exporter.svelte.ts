@@ -56,10 +56,22 @@ class Exporter {
 		return Math.min(100, Math.round((this.got / this.total) * 100));
 	}
 
-	async run(id: string, job?: string) {
+	/** the whole project as one zip */
+	run(id: string, job?: string) {
+		if (!id) return;
+		return this.#go(store.exportUrl(id, job), `guttex-${id.slice(0, 12)}.zip`);
+	}
+
+	/** the binary itself, as submitted or with the patches applied */
+	runBinary(id: string, variant: 'original' | 'patched', job?: string, base?: string) {
+		if (!id) return;
+		return this.#go(store.binaryUrl(id, variant, job, base), `${id.slice(0, 12)}.bin`);
+	}
+
+	async #go(url: string, fallback: string) {
 		// The whole point: a second click while one is in flight is the user
 		// asking louder, not asking for a second copy.
-		if (this.busy || !id) return;
+		if (this.busy) return;
 		if (this.#timer) clearTimeout(this.#timer);
 
 		this.phase = 'packing';
@@ -71,10 +83,19 @@ class Exporter {
 		const ac = new AbortController();
 		this.#abort = ac;
 		try {
-			const res = await fetch(store.exportUrl(id, job), { signal: ac.signal });
-			if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+			const res = await fetch(url, { signal: ac.signal });
+			if (!res.ok) {
+				let msg = res.statusText;
+				try {
+					const body = await res.json();
+					if (body?.message) msg = body.message;
+				} catch {
+					/* not json */
+				}
+				throw new Error(`${res.status} ${msg}`);
+			}
 
-			this.name = filenameOf(res.headers.get('content-disposition')) || `guttex-${id.slice(0, 12)}.zip`;
+			this.name = filenameOf(res.headers.get('content-disposition')) || fallback;
 			this.total = Number(res.headers.get('content-length') ?? 0);
 			this.phase = 'downloading';
 
@@ -117,7 +138,7 @@ class Exporter {
 			chunks.push(value as unknown as BlobPart);
 			this.got += value.byteLength;
 		}
-		return new Blob(chunks, { type: 'application/zip' });
+		return new Blob(chunks, { type: res.headers.get('content-type') ?? 'application/octet-stream' });
 	}
 
 	#save(blob: Blob, name: string) {

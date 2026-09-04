@@ -21,6 +21,7 @@
 	import PluginPanel from '$components/PluginPanel.svelte';
 	import ActionsMenu from '$components/ActionsMenu.svelte';
 	import ContextMenu from '$components/ContextMenu.svelte';
+	import EditDialog from '$components/EditDialog.svelte';
 	import RenameDialog from '$components/RenameDialog.svelte';
 	import ExportDialog from '$components/ExportDialog.svelte';
 	import SignatureDialog from '$components/SignatureDialog.svelte';
@@ -131,6 +132,8 @@
 <StatusBar />
 <ContextMenu />
 <RenameDialog />
+
+<EditDialog />
 <ExportDialog />
 <SignatureDialog />
 
