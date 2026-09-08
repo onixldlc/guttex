@@ -24,6 +24,7 @@
 // The in-memory document is the same shape the server stores, so syncing is a
 // merge of two documents rather than a translation between two models.
 
+import type { Op } from '$lib/ops';
 import { normAddr } from '$lib/format';
 
 /** `at` is this device's clock at the moment of the edit; merges turn on it. */
@@ -101,8 +102,18 @@ class Renames {
 	private cache: { job: string; ver: number; map: Map<string, string> } | null = null;
 	private timer: ReturnType<typeof setTimeout> | null = null;
 
-	/** set by the sync layer; called whenever a local edit needs pushing */
-	onDirty: ((job: string) => void) | null = null;
+	/**
+	 * Everyone who wants to hear about a local edit: the sync layer, so it can
+	 * push, and the history, so it can commit. A list rather than the single
+	 * callback this used to be -- neither of those two owns the other, and the
+	 * second one to register must not silently replace the first.
+	 */
+	#watchers = new Set<(job: string, ops: Op[]) => void>();
+
+	onEdit(fn: (job: string, ops: Op[]) => void): () => void {
+		this.#watchers.add(fn);
+		return () => this.#watchers.delete(fn);
+	}
 
 	readonly device = typeof localStorage === 'undefined' ? '' : deviceId();
 
@@ -129,17 +140,22 @@ class Renames {
 		return this.docs[job] ?? blank(job);
 	}
 
-	private put(job: string, next: Doc, local: boolean) {
+	private put(job: string, next: Doc, local: boolean, ops: Op[] = []) {
 		this.docs = { ...this.docs, [job]: next };
 		this.ver++;
 		this.save();
 		if (local) {
 			this.unsent = { ...this.unsent, [job]: true };
-			this.onDirty?.(job);
+			for (const w of this.#watchers) w(job, ops);
 		}
 	}
 
-	private edit(job: string, fn: (d: Doc) => void) {
+	/**
+	 * One edit: mutate the document, and say what the edit *was*. The ops are
+	 * what the history commits -- they carry the before and after, which the
+	 * document itself does not once it has been written.
+	 */
+	private edit(job: string, ops: Op[], fn: (d: Doc) => void) {
 		const cur = this.doc(job);
 		const next: Doc = {
 			...cur,
@@ -148,7 +164,7 @@ class Renames {
 			patches: { ...(cur.patches ?? {}) }
 		};
 		fn(next);
-		this.put(job, next, true);
+		this.put(job, next, true, ops);
 	}
 
 	// ----------------------------------------------------------------- patches
@@ -159,18 +175,22 @@ class Renames {
 	 * three. Nothing else is stored. The binary is never touched; the patch
 	 * is applied to a copy when the binary is exported.
 	 */
-	setPatch(job: string, addr: string, changes: string) {
+	setPatch(job: string, addr: string, changes: string, was = '') {
 		const a = normAddr(addr);
 		if (!job || !a || !changes) return;
-		this.edit(job, (d) => {
+		if (this.doc(job).patches?.[a]?.changes === changes) return;
+		// `was` is only ever for the log: the patch itself is the address and the
+		// new bytes, and nothing replays the old ones.
+		this.edit(job, [{ kind: 'patch', at: a, bytes: changes, was: was || undefined }], (d) => {
 			d.patches[a] = { changes };
 		});
 	}
 
 	delPatch(job: string, addr: string) {
 		const a = normAddr(addr);
-		if (!this.doc(job).patches?.[a]) return;
-		this.edit(job, (d) => {
+		const had = this.doc(job).patches?.[a]?.changes;
+		if (!had) return;
+		this.edit(job, [{ kind: 'patch', at: a, bytes: '', was: had }], (d) => {
 			delete d.patches[a];
 		});
 	}
@@ -212,8 +232,9 @@ class Renames {
 		// Back to what Ghidra called it is a removal -- but it is written as a
 		// tombstone, not a delete, or another device would resurrect the name
 		// the next time it pushed.
-		this.edit(job, (d) => {
-			d.symbols[a] = { from, to: name === from ? '' : name, at: Date.now(), by: this.device };
+		const named = name === from ? '' : name;
+		this.edit(job, [{ kind: 'rename', at: a, from, to: named }], (d) => {
+			d.symbols[a] = { from, to: named, at: Date.now(), by: this.device };
 		});
 	}
 
@@ -231,10 +252,11 @@ class Renames {
 	setLocal(job: string, fnAddr: string, ident: string, to: string) {
 		if (!job || !fnAddr || !ident) return;
 		const name = to.trim();
-		this.edit(job, (d) => {
+		const named = name === ident ? '' : name;
+		this.edit(job, [{ kind: 'local', at: normAddr(fnAddr), ident, from: ident, to: named }], (d) => {
 			d.locals[this.lkey(fnAddr, ident)] = {
 				from: ident,
-				to: name === ident ? '' : name,
+				to: named,
 				at: Date.now(),
 				by: this.device
 			};
@@ -284,8 +306,21 @@ class Renames {
 	}
 
 	clear(job: string) {
+		const d0 = this.doc(job);
+		const ops: Op[] = [
+			...Object.entries(d0.symbols)
+				.filter(([, e]) => e.to !== '')
+				.map(([at, e]): Op => ({ kind: 'rename', at, from: e.from ?? '', to: '' })),
+			...Object.entries(d0.locals)
+				.filter(([, e]) => e.to !== '')
+				.map(([k, e]): Op => {
+					const [at, ...rest] = k.split(':');
+					return { kind: 'local', at, ident: rest.join(':') || (e.from ?? ''), from: e.from ?? '', to: '' };
+				})
+		];
+		if (!ops.length) return;
 		// tombstone everything, so the removal actually propagates
-		this.edit(job, (d) => {
+		this.edit(job, ops, (d) => {
 			const at = Date.now();
 			for (const k of Object.keys(d.symbols)) d.symbols[k] = { ...d.symbols[k], to: '', at };
 			for (const k of Object.keys(d.locals)) d.locals[k] = { ...d.locals[k], to: '', at };

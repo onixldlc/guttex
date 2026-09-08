@@ -114,3 +114,52 @@ export function fileOffset(map: PatchMap, base: bigint, addr: bigint): number {
 	}
 	throw new Unmapped(`0x${addr.toString(16)} is not backed by the file (uninitialised data?)`);
 }
+
+/** `"a1 a1"` -> bytes, or null when it is not whole hex bytes */
+export function hexToBytes(aob: string): Uint8Array | null {
+	const s = aob.replace(/\s+/g, '');
+	if (!s || s.length % 2 || /[^0-9a-fA-F]/.test(s)) return null;
+	const out = new Uint8Array(s.length / 2);
+	for (let i = 0; i < out.length; i++) out[i] = parseInt(s.slice(i * 2, i * 2 + 2), 16);
+	return out;
+}
+
+export class BadPatch extends Error {}
+
+/**
+ * Write a patch list into a copy of the file, in place.
+ *
+ * The caller owns the copy: the original bytes are never modified, here or
+ * anywhere else. Two callers want this -- the binary export and the rebuild
+ * that submits the patched bytes back to the analyser -- and they must agree
+ * byte for byte, or the file you download and the file Ghidra analysed would be
+ * two different programs.
+ *
+ * `base` is Ghidra's image base. Absent means "trust the file's own base",
+ * which is right for anything not rebased.
+ */
+export function applyPatches(
+	file: Uint8Array,
+	base: bigint | null,
+	patches: { addr: string; bytes: string }[]
+): number {
+	const map = buildMap(file);
+	const at = base ?? map.linkBase;
+	let written = 0;
+	for (const p of patches) {
+		if (!/^[0-9a-fA-F]+$/.test(p.addr)) throw new BadPatch(`patch at "${p.addr}": not a plain address`);
+		const bytes = hexToBytes(p.bytes);
+		if (!bytes) throw new BadPatch(`patch at 0x${p.addr}: "${p.bytes}" is not hex`);
+		const addr = BigInt(`0x${p.addr}`);
+		// per byte, so a patch straddling two mapped ranges still lands
+		for (let i = 0; i < bytes.length; i++) {
+			const off = fileOffset(map, at, addr + BigInt(i));
+			if (off < 0 || off >= file.length) {
+				throw new Unmapped(`patch at 0x${p.addr}: offset ${off} outside the file`);
+			}
+			file[off] = bytes[i];
+			written++;
+		}
+	}
+	return written;
+}

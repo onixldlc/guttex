@@ -10,6 +10,10 @@
 services:
   ghidra-rest:
     image: ghcr.io/onixldlc/ghidra-rest:latest
+    build:
+      context: ../ghidra-rest/
+      dockerfile: ../ghidra-rest/docker/Dockerfile
+
     container_name: guttex-ghidra-rest
     restart: unless-stopped
     # Literal values on purpose. `${VAR:-default}` is a docker-compose feature;

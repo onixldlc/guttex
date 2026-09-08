@@ -2,6 +2,7 @@
 // same `/api` prefix as ghidra-rest, different owner -- `/api/guttex/*` is
 // answered by guttex's own endpoints, everything else is forwarded.
 
+import type { Op } from '$lib/ops';
 import type { Doc } from '$lib/state/renames.svelte';
 
 const BASE = '/api/guttex/v1';
@@ -21,12 +22,16 @@ export type ProjectMeta = {
 	id: string;
 	name: string;
 	file?: string;
+	/** the job this project was last opened through, on this machine */
+	job?: string;
 	created_at: string;
 	updated_at: string;
 	rev: number;
 	renames: number;
+	patches?: number;
 	archived?: boolean;
 	archive_bytes?: number;
+	branch?: string;
 };
 
 async function json<T>(path: string, init?: RequestInit): Promise<T> {
@@ -122,8 +127,12 @@ export const store = {
 	 * `job` tells the server which job to pull the artifacts from if they have
 	 * not been archived yet.
 	 */
-	exportUrl: (id: string, job?: string) =>
-		`${BASE}/projects/${id}/export${job ? `?job=${encodeURIComponent(job)}` : ''}`,
+	exportUrl: (id: string, job?: string) => {
+		const q = new URLSearchParams();
+		if (job) q.set('job', job);
+		const s = q.toString();
+		return `${BASE}/projects/${id}/export${s ? `?${s}` : ''}`;
+	},
 
 	/**
 	 * The binary itself: `original` as submitted, `patched` with the project's

@@ -210,7 +210,7 @@
 
 	<section class="panel jobs">
 		<div class="panel-head">
-			jobs
+			projects
 			<span class="spacer"></span>
 			<button class="flat" onclick={refresh}>refresh</button>
 		</div>

@@ -3,26 +3,9 @@
 	// contributes one, so a stock guttex shows no dead chrome.
 	import { plugins } from '$lib/plugins/host.svelte';
 	import { session } from '$lib/state/session.svelte';
+	import { dismissable } from '$lib/actions/dismissable';
 
 	let open = $state(false);
-	let box = $state<HTMLDivElement | null>(null);
-
-	$effect(() => {
-		if (!open) return;
-		const onDown = (e: MouseEvent) => {
-			if (box && !box.contains(e.target as Node)) open = false;
-		};
-		const onKey = (e: KeyboardEvent) => {
-			if (e.key === 'Escape') open = false;
-		};
-		document.addEventListener('mousedown', onDown);
-		document.addEventListener('keydown', onKey);
-		return () => {
-			document.removeEventListener('mousedown', onDown);
-			document.removeEventListener('keydown', onKey);
-		};
-	});
-
 	function run(key: string) {
 		open = false;
 		plugins.run(key);
@@ -30,7 +13,7 @@
 </script>
 
 {#if plugins.actions.length}
-	<div class="wrap" bind:this={box}>
+	<div class="wrap" use:dismissable={{ onclose: () => (open = false), enabled: open }}>
 		<button class="flat trigger" aria-expanded={open} onclick={() => (open = !open)}>
 			actions
 		</button>

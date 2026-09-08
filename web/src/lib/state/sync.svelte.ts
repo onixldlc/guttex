@@ -42,9 +42,10 @@ class Sync {
 	private busy = false;
 
 	constructor() {
-		renames.onDirty = (job) => {
+		// One of several listeners now -- the history commits off the same edits.
+		renames.onEdit((job) => {
 			if (job === this.key) this.schedule();
-		};
+		});
 	}
 
 	/**
@@ -63,9 +64,16 @@ class Sync {
 						return;
 					}
 					if (key !== this.key) this.begin(key);
-					// the project card wants the binary's name, and the job id
-					// is this machine's handle on it for a later export
-					if (job) void store.touch(key, job.filename, job.filename, job.id).catch(() => {});
+					// The project card wants the binary's name, and the job id is
+					// this machine's handle on it for a later export -- but only
+					// when the job holds *this* binary. A job built from a commit
+					// holds patched bytes, and recording it here would point every
+					// later export and rebuild at the patched file instead of the
+					// original.
+					if (job) {
+						const own = job.sha256 === key ? job.id : '';
+						void store.touch(key, job.filename, job.filename, own).catch(() => {});
+					}
 				});
 			});
 		});

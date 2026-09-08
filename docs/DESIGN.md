@@ -86,9 +86,58 @@ Clock skew between devices is the known weakness. It is bounded by how wrong a
 phone's clock is, and the failure mode is "the wrong one of your own two renames
 won", not corruption. A vector clock would be the fix if that ever bites.
 
+## Patches: applied in place, never a second analysis
+
+Every edit that means something -- a rename, a local rename, a byte patch, a
+prototype retype -- is an **op** (`$lib/ops.ts`). Ops are what the rename store
+reports to its watchers; they are not stored as a tree. What is stored is the
+annotations document: what the project looks like *now*, synced per entry by
+`at`.
+
+There was a commit tree here -- ops grouped into commits, branches, replay,
+`history.json` travelling inside the project bundle. It was parked behind a flag
+for most of its life and has been removed. See `docs/UI-ARCHITECTURE.md` §0 for
+what went and what was deliberately kept. If it comes back it should come back
+as a design that was finished, not one that was switched off.
+
+### Getting a patch into the decompiler
+
+guttex decodes a patch itself (`$lib/state/patchview.svelte.ts`), so the listing
+is honest the moment you apply one. The decompiler is not -- it is Ghidra's, and
+Ghidra only knows the bytes it was given.
+
+Getting it the new ones happens **in place**. The job's Ghidra project is still
+on disk, so ghidra-rest can write into it: `PUT /v1/results/<job>/patches`
+clears the code units the patch covers, writes the bytes, re-disassembles the
+function they land in and re-decompiles it and its callers. A headless run --
+tens of seconds. It keeps a ledger of what each address held before, which is
+the only record of that once the program has been written over, and the only way
+back.
+
+`patcher` (`$lib/state/patcher.svelte.ts`) drives it, from one place: the
+`rebuild` item in the title-bar menu, which expands into the same two rows the
+binary export offers -- this function, or the whole binary. A whole-binary push
+is a *checkout*, not an addition: an address the program has patched and the
+document does not is reverted from the ledger's original in the same run, or the
+program would keep bytes the project no longer claims.
+
+Nothing here is automatic. It runs when someone presses a button.
+
+The alternative -- submitting the patched file as a new job -- is deliberately
+not offered. It costs a second full copy of the binary and a full analysis: on a
+239 MiB target, 1.1 GB and minutes, for four bytes. The endpoint that did it has
+been removed.
+
+Prototypes are the exception to "guttex owns the annotations". A retype changes
+what the decompiler produces, so it lives inside Ghidra. An in-place rebuild
+keeps them -- it is the same program, and never re-analysed.
+
 ## Endpoint split
 
-- `/api/v1/*` -- proxied to ghidra-rest untouched (results, logs, export).
+- `/api/v1/*` -- proxied to ghidra-rest untouched (results, logs, export). Two
+  of those are writes rather than reads: `.../function/<addr>/signature` and
+  `.../patches`, which edit the job's Ghidra project in place. Both cost a
+  headless run, so anything calling them shows that it is waiting.
 - `/api/guttex/v1/projects...` -- projects, annotations, archive, export/import,
   and `/binary?variant=original|patched` -- the submitted binary back out, as-is
   or with the patch list applied to a copy in memory (`$lib/server/patchmap`

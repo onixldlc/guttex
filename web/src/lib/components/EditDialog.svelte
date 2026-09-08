@@ -15,6 +15,8 @@
 	import { patchEditor } from '$lib/state/editor.svelte';
 	import { normAob, renames } from '$lib/state/renames.svelte';
 	import { session } from '$lib/state/session.svelte';
+	import { dismissable } from '$lib/actions/dismissable';
+	import Scrim from './Scrim.svelte';
 
 	type Mode = 'hex' | 'asm';
 
@@ -93,7 +95,8 @@
 		const a = patchEditor.ask;
 		if (!a || !outHex) return;
 		patchEditor.close();
-		renames.setPatch(session.project, a.addr, outHex);
+		// the bytes that were there feed the commit log, nothing else
+		renames.setPatch(session.project, a.addr, outHex, a.bytes);
 	}
 
 	function drop() {
@@ -103,18 +106,16 @@
 		renames.delPatch(session.project, a.addr);
 	}
 
-	function onKey(e: KeyboardEvent) {
-		if (patchEditor.ask && e.key === 'Escape') patchEditor.close();
-	}
 </script>
 
-<svelte:window onkeydown={onKey} />
-
 {#if patchEditor.ask}
-	<!-- svelte-ignore a11y_click_events_have_key_events -->
-	<!-- svelte-ignore a11y_no_static_element_interactions -->
-	<div class="scrim" onclick={() => patchEditor.close()}></div>
-	<div class="box" role="dialog" aria-label="edit instruction">
+	<Scrim onclose={() => patchEditor.close()} />
+	<div
+		class="box"
+		role="dialog"
+		aria-label="edit instruction"
+		use:dismissable={{ onclose: () => patchEditor.close(), outside: false }}
+	>
 		<div class="what">
 			edit at {displayAddr(patchEditor.ask.addr)}
 			{#if patchEditor.ask.rows > 1}<span class="dim"> · {patchEditor.ask.rows} instructions</span
@@ -180,12 +181,6 @@
 {/if}
 
 <style>
-	.scrim {
-		position: fixed;
-		inset: 0;
-		z-index: 90;
-		background: rgb(0 0 0 / 35%);
-	}
 	.box {
 		position: fixed;
 		z-index: 91;

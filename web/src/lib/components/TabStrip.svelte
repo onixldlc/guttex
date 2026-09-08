@@ -6,6 +6,7 @@
 	// independent of what is currently on screen -- measuring the live tabs
 	// would feed the layout back into its own input and oscillate.
 	import type { Tab } from './tabs';
+	import { dismissable } from '$lib/actions/dismissable';
 
 	let {
 		tabs,
@@ -75,20 +76,7 @@
 		active = id;
 		open = false;
 	}
-
-	function outside(e: PointerEvent) {
-		if (!open) return;
-		const t = e.target as Node;
-		if (menu && !menu.contains(t)) open = false;
-	}
 </script>
-
-<svelte:window
-	onpointerdown={outside}
-	onkeydown={(e) => {
-		if (e.key === 'Escape') open = false;
-	}}
-/>
 
 <div class="strip" bind:this={strip} role="tablist" aria-label={label}>
 	<!-- off-layout copy used only for measurement -->
@@ -111,7 +99,11 @@
 	{/each}
 
 	{#if hidden.length}
-		<div class="more" bind:this={menu}>
+		<div
+			class="more"
+			bind:this={menu}
+			use:dismissable={{ onclose: () => (open = false), enabled: open }}
+		>
 			<button
 				class="tab dots"
 				class:on={hidden.some((t) => t.id === active)}

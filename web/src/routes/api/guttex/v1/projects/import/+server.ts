@@ -44,6 +44,9 @@ export const POST: RequestHandler = async ({ request }) => {
 	await touch(id, m.name ?? '', m.file ?? '');
 	const doc = await merge(id, a);
 
+	// A bundle exported by an older guttex may carry a history.json. It is
+	// ignored rather than rejected: the names next to it are still good.
+
 	const artifacts = parts.get('ghidra-export.zip');
 	if (artifacts) await putArchive(id, artifacts);
 

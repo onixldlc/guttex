@@ -16,6 +16,7 @@
 
 import { api, ApiError } from '$lib/api/client';
 import type { SignatureEntry } from '$lib/api/types';
+import { session } from '$lib/state/session.svelte';
 
 export type Ask = {
 	/** job id -- signatures are per analysis, unlike renames which are per binary */
@@ -151,6 +152,7 @@ class Signer {
 		try {
 			const r = await api.clearSignature(a.job, a.addr);
 			this.tookMs = r.duration_ms;
+			const was = this.#entries[a.addr];
 			const next = { ...this.#entries };
 			delete next[a.addr];
 			this.#entries = next;

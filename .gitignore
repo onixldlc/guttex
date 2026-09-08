@@ -6,4 +6,5 @@ dist/
 .env.*
 !.env.example
 *.log
+.scratch/
 .DS_Store

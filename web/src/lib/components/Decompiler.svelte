@@ -20,6 +20,7 @@
 	import { addrInName, aliasName, dispName, localName } from '$lib/state/renames.svelte';
 	import { operandName } from '$lib/state/book.svelte';
 	import { plugins } from '$lib/plugins/host.svelte';
+	import { patcher } from '$lib/state/patcher.svelte';
 	import { signer } from '$lib/state/signature.svelte';
 	import { indexAsm, mapLine, type AsmIndex, type Hit } from '$lib/decomp/asmmap';
 	import { asmMark } from '$lib/state/asmmark.svelte';
@@ -37,8 +38,10 @@
 		const addr = session.addr;
 		const id = session.id;
 		// Read so a retype repaints: the server re-decompiled this function and
-		// its callers, so whatever is on screen is now the old text.
+		// its callers, so whatever is on screen is now the old text. A byte
+		// push does the same thing for the same reason.
 		signer.rev;
+		patcher.rev;
 		if (!id || !addr) {
 			data = null;
 			return;

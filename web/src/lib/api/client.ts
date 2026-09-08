@@ -17,6 +17,8 @@ import type {
 	JobsPage,
 	MemBlock,
 	Page,
+	PatchApplied,
+	PatchesResponse,
 	SignatureApplied,
 	SignaturesResponse,
 	StringEntry,
@@ -198,6 +200,28 @@ export const api = {
 		}),
 	clearSignature: (id: string, addr: string) =>
 		json<SignatureApplied>(`/v1/results/${id}/function/${addr}/signature`, { method: 'DELETE' }),
+
+	// --- patches: the other calls that write back into Ghidra ---
+	// These put bytes into the job's own program and re-disassemble the one
+	// function they land in, so the listing and the decompiler agree without
+	// anyone analysing a second copy of the binary. Same cost shape as a
+	// signature: a headless run, tens of seconds, show that you are waiting.
+	patches: (id: string) => json<PatchesResponse>(`/v1/results/${id}/patches`),
+	applyPatch: (id: string, addr: string, bytes: string) =>
+		json<PatchApplied>(`/v1/results/${id}/function/${addr}/patch`, {
+			method: 'PUT',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ bytes })
+		}),
+	/** every address in one headless run -- what restoring a whole commit uses */
+	applyPatches: (id: string, patches: { address: string; bytes: string }[]) =>
+		json<PatchApplied>(`/v1/results/${id}/patches`, {
+			method: 'PUT',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ patches })
+		}),
+	clearPatch: (id: string, addr: string) =>
+		json<PatchApplied>(`/v1/results/${id}/function/${addr}/patch`, { method: 'DELETE' }),
 	hexdump: (id: string, addr: string, length = 256) =>
 		json<HexdumpResponse>(`/v1/results/${id}/hexdump/${addr}${qs({ length })}`)
 };

@@ -7,7 +7,7 @@
 	import { displayAddr, normAddr } from '$lib/format';
 	import { renames } from '$lib/state/renames.svelte';
 	import type { Row } from '$components/columns';
-	import type { ListSpec } from './lists';
+	import type { ListSpec } from '$lib/lists';
 
 	let { spec, onpick }: { spec: ListSpec; onpick: (addr: string) => void } = $props();
 
@@ -108,9 +108,9 @@
 						onclick={() => a && onpick(a)}
 					>
 						<span class="main">
-							<span class="title {spec.titleCls ?? ''}">{spec.title(r)}</span>
+							<span class="title {spec.row.cls ?? ''}">{spec.row.title(r)}</span>
 							<span class="sub">
-								{#each spec.sub(r) as s, k (k)}<span>{s}</span>{/each}
+								{#each spec.row.sub(r) as s, k (k)}<span>{s}</span>{/each}
 							</span>
 						</span>
 						{#if a}<span class="chev" aria-hidden="true">&rsaquo;</span>{/if}

@@ -57,8 +57,19 @@ class Session {
 	 * that turns out to belong to a different binary.
 	 */
 	get project() {
-		return this.job?.sha256 ?? '';
+		return this.projectOverride || (this.job?.sha256 ?? '');
 	}
+
+	/**
+	 * The project a rebuilt job belongs to.
+	 *
+	 * A commit that changed bytes is analysed as its own job, and that job's
+	 * binary has its own sha256 -- so `job.sha256` would key the annotations
+	 * under the patched binary and split one project in two. The route carries
+	 * the real project in `?p=` and sets this, so names, patches and history all
+	 * stay pointed at the binary the work started from.
+	 */
+	projectOverride = $state('');
 
 	async open(id: string) {
 		if (this.id === id && this.job) {
@@ -165,6 +176,7 @@ class Session {
 
 	reset() {
 		this.stop();
+		this.projectOverride = '';
 		this.job = null;
 		this.summary = null;
 		this.addr = '';

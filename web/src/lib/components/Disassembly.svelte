@@ -12,6 +12,7 @@
 	import { asmSel } from '$lib/state/asmsel.svelte';
 	import { asmMark } from '$lib/state/asmmark.svelte';
 	import { patchView } from '$lib/state/patchview.svelte';
+	import { patcher } from '$lib/state/patcher.svelte';
 	import { aliasName, dispName } from '$lib/state/renames.svelte';
 	import { book, namedFlow, operandName } from '$lib/state/book.svelte';
 
@@ -36,6 +37,9 @@
 	$effect(() => {
 		const id = session.id;
 		const addr = session.addr;
+		// Read so a push repaints: the server rewrote this function's listing
+		// from the patched bytes, so what is on screen is the old decode.
+		patcher.rev;
 		if (!id || !addr) {
 			data = null;
 			return;
@@ -183,13 +187,15 @@
 			{#if view.hot.size}
 				<span
 					class="patched"
-					title="guttex decoded these rows, not ghidra -- the decompiler and the graphs still show the original bytes"
+					title="guttex decoded these rows, not ghidra -- the decompiler and the graphs still show the original bytes until you rebuild"
 					>patched</span
 				>
 			{:else if view.busy}
 				<span class="dim">decoding patch...</span>
 			{/if}
 			{#if view.error}<span class="err">{view.error}</span>{/if}
+			{#if patcher.progress}<span class="dim">{patcher.progress}</span>{/if}
+			{#if patcher.error}<span class="err">{patcher.error}</span>{/if}
 			<span class="spacer"></span>
 			{#if marked}
 				<button

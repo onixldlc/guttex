@@ -1,10 +1,10 @@
 <script lang="ts">
 	import { api } from '$lib/api/client';
 	import { session } from '$lib/state/session.svelte';
-	import { exporter } from '$lib/state/exporter.svelte';
 	import { progress } from '$lib/state/progress.svelte';
-	import { renames } from '$lib/state/renames.svelte';
 	import { displayAddr, fmtBytes, shortId } from '$lib/format';
+	import { dismissable } from '$lib/actions/dismissable';
+	import { groupedFor, type Command } from '$lib/commands';
 
 	let jump = $state('');
 
@@ -12,51 +12,30 @@
 	// on a narrow window they were the first things pushed off the edge, so
 	// everything that is not about the current address now lives under one
 	// trigger that is always there anyway.
+	//
+	// What it offers comes from `$lib/commands`. The layout is this file's:
+	// a command that belongs to a group expands in place rather than flying out
+	// a submenu, because two more rows are cheaper to hit (and possible on
+	// touch) than a nested hover target. One group is open at a time.
 	let menuOpen = $state(false);
-	// "export binary" expands in place rather than flying out a submenu:
-	// two more rows are cheaper to hit (and possible on touch) than a nested
-	// hover target.
-	let binOpen = $state(false);
-	let box = $state<HTMLDivElement | null>(null);
+	let openGroup = $state('');
 
-	$effect(() => {
-		if (!menuOpen) return;
-		const onDown = (e: MouseEvent) => {
-			if (box && !box.contains(e.target as Node)) close();
-		};
-		const onKey = (e: KeyboardEvent) => {
-			if (e.key === 'Escape') close();
-		};
-		document.addEventListener('mousedown', onDown);
-		document.addEventListener('keydown', onKey);
-		return () => {
-			document.removeEventListener('mousedown', onDown);
-			document.removeEventListener('keydown', onKey);
-		};
-	});
+	// A group with nothing applicable in it is not drawn at all -- `when` has
+	// already dropped its rows -- so the menu shrinks instead of filling up with
+	// things that would do nothing.
+	const groups = $derived(menuOpen ? groupedFor('menu') : []);
 
 	function close() {
 		menuOpen = false;
-		binOpen = false;
+		openGroup = '';
 	}
 
-	function exportProject() {
+	function run(c: Command) {
 		close();
-		exporter.run(session.project, session.id);
+		c.run({ target: null });
 	}
 
-	function exportBinary(variant: 'original' | 'patched') {
-		close();
-		exporter.runBinary(session.project, variant, session.id, session.summary?.image_base);
-	}
-
-	function toggleConsole() {
-		close();
-		session.consoleOpen = !session.consoleOpen;
-		if (session.consoleOpen) session.refreshLog();
-	}
-
-	const patchCount = $derived(session.project ? renames.patchCount(session.project) : 0);
+	const busy = (group: Command[]) => group.some((c) => c.busy?.());
 
 	async function go(e: SubmitEvent) {
 		e.preventDefault();
@@ -75,7 +54,7 @@
 </script>
 
 <header class="bar">
-	<div class="menuwrap" bind:this={box}>
+	<div class="menuwrap" use:dismissable={{ onclose: close, enabled: menuOpen }}>
 		<button
 			class="brand"
 			aria-expanded={menuOpen}
@@ -87,58 +66,49 @@
 		{#if menuOpen}
 			<ul class="menu" role="menu">
 				<li><a class="flat item" role="menuitem" href="/" onclick={close}>home</a></li>
-				<li>
-					<button
-						class="flat item"
-						role="menuitem"
-						disabled={!session.project || exporter.busy}
-						title="the whole project as one file: names, patches, metadata and the analysis artifacts"
-						onclick={exportProject}
-					>
-						{exporter.busy ? 'exporting...' : 'export project'}
-					</button>
-				</li>
-				<li>
-					<button
-						class="flat item"
-						role="menuitem"
-						aria-expanded={binOpen}
-						disabled={!session.project || exporter.busy}
-						onclick={() => (binOpen = !binOpen)}
-					>
-						export binary<span class="caret" aria-hidden="true">{binOpen ? '▾' : '▸'}</span>
-					</button>
-					{#if binOpen}
-						<ul class="submenu">
+				{#each groups as group (group[0].group ?? group[0].id)}
+					{@const name = group[0].group}
+					{#if name}
+						<li>
+							<button
+								class="flat item"
+								role="menuitem"
+								aria-expanded={openGroup === name}
+								disabled={busy(group)}
+								onclick={() => (openGroup = openGroup === name ? '' : name)}
+							>
+								{busy(group) ? `${name}...` : name}<span class="caret" aria-hidden="true"
+									>{openGroup === name ? '▾' : '▸'}</span
+								>
+							</button>
+							{#if openGroup === name}
+								<ul class="submenu">
+									{#each group as c (c.id)}
+										<li>
+											<button class="flat item sub" role="menuitem" onclick={() => run(c)}>
+												{c.label({ target: null })}
+											</button>
+										</li>
+									{/each}
+								</ul>
+							{/if}
+						</li>
+					{:else}
+						{#each group as c (c.id)}
 							<li>
 								<button
-									class="flat item sub"
+									class="flat item"
 									role="menuitem"
-									title="the binary exactly as it was submitted"
-									onclick={() => exportBinary('original')}
+									class:on={c.id === 'console' && session.consoleOpen}
+									disabled={c.busy?.()}
+									onclick={() => run(c)}
 								>
-									original
+									{c.label({ target: null })}
 								</button>
 							</li>
-							<li>
-								<button
-									class="flat item sub"
-									role="menuitem"
-									disabled={!patchCount}
-									title="a copy of the binary with this project's byte patches applied"
-									onclick={() => exportBinary('patched')}
-								>
-									current{patchCount ? ` (${patchCount} patch${patchCount === 1 ? '' : 'es'})` : ' (no patches)'}
-								</button>
-							</li>
-						</ul>
+						{/each}
 					{/if}
-				</li>
-				<li>
-					<button class="flat item" role="menuitem" class:on={session.consoleOpen} onclick={toggleConsole}>
-						console
-					</button>
-				</li>
+				{/each}
 			</ul>
 		{/if}
 	</div>

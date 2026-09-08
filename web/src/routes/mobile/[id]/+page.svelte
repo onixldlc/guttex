@@ -10,29 +10,23 @@
 	import { untrack } from 'svelte';
 	import { session, type CenterTab } from '$lib/state/session.svelte';
 	import { sync } from '$lib/state/sync.svelte';
-	import { exporter } from '$lib/state/exporter.svelte';
 	import { progress } from '$lib/state/progress.svelte';
 	import SyncChip from '$components/SyncChip.svelte';
 	import { displayAddr, normAddr, shortId } from '$lib/format';
 	import { dispName } from '$lib/state/renames.svelte';
-	import { renameSymbol } from '$lib/rename';
 	import { plugins } from '$lib/plugins/host.svelte';
 	import Chips from '$lib/mobile/Chips.svelte';
 	import MobileList from '$lib/mobile/MobileList.svelte';
-	import { KINDS, LISTS, type Kind } from '$lib/mobile/lists';
-	import Disassembly from '$components/Disassembly.svelte';
-	import Decompiler from '$components/Decompiler.svelte';
-	import FunctionGraph from '$components/FunctionGraph.svelte';
-	import CallGraph from '$components/CallGraph.svelte';
-	import HexView from '$components/HexView.svelte';
+	import { LISTS, listById } from '$lib/lists';
 	import InfoPanel from '$components/InfoPanel.svelte';
-	import XrefsPanel from '$components/XrefsPanel.svelte';
 	import PluginPanel from '$components/PluginPanel.svelte';
 	import RenameDialog from '$components/RenameDialog.svelte';
 	import ExportDialog from '$components/ExportDialog.svelte';
 	import SignatureDialog from '$components/SignatureDialog.svelte';
 	import { signer } from '$lib/state/signature.svelte';
 	import type { Tab } from '$components/tabs';
+	import { isCentre, viewsFor } from '$lib/views';
+	import { commandsFor, runKey } from '$lib/commands';
 	import '$lib/mobile/mobile.css';
 
 	$effect(() => {
@@ -71,11 +65,15 @@
 	let detail = $derived(!!session.addr);
 
 	// ---- screen 1: the result lists ----
-	let kind = $state<Kind | 'info'>('functions');
-	const browseTabs: Tab[] = ['functions', 'info', ...KINDS.slice(1)].map((id) => ({
-		id,
-		label: id
-	}));
+	// `info` is not a list; it rides in this bar because on a phone there is no
+	// second dock to put it in.
+	let kind = $state<string>('functions');
+	const browseTabs: Tab[] = [
+		{ id: 'functions', label: 'functions' },
+		{ id: 'info', label: 'info' },
+		...LISTS.slice(1).map((l) => ({ id: l.id, label: l.label }))
+	];
+	let list = $derived(listById(kind));
 
 	// ---- screen 2: the listing views ----
 	// `details` is the right dock, which has no CenterTab of its own; everything
@@ -88,18 +86,17 @@
 	});
 	function setView(v: string) {
 		view = v;
-		if (v !== 'details') session.tab = v as CenterTab;
+		// `details` is a tab here and nowhere else, so it is not a CenterTab and
+		// must not be written into the session -- the catalogue says which is which.
+		if (isCentre(v)) session.tab = v as CenterTab;
 	}
 	let detailTabs = $derived<Tab[]>([
-		{ id: 'decompiler', label: 'decompiler' },
-		{ id: 'disasm', label: 'disassembly' },
-		{ id: 'graph', label: 'graph' },
-		{ id: 'details', label: 'details' },
-		{ id: 'hex', label: 'hexdump' },
-		{ id: 'callgraph', label: 'call graph' },
-		{ id: 'info', label: 'info' },
+		...viewsFor('phone').map((v) => ({ id: v.id, label: v.label })),
 		...plugins.panels.map((p) => ({ id: p.key, label: p.label }))
 	]);
+
+	// Anything the catalogue does not claim is a plugin panel.
+	let View = $derived(viewsFor('phone').find((v) => v.id === view)?.component);
 
 	// Selecting an address pushes one history entry, so going back is exactly
 	// the hardware back button -- the two must not disagree.
@@ -116,6 +113,8 @@
 		jump = '';
 	}
 </script>
+
+<svelte:window onkeydown={runKey} />
 
 <div class="m-app">
 	<header class="m-bar">
@@ -156,21 +155,20 @@
 				<input class="mono" bind:value={jump} placeholder="seek 0x001040d0" aria-label="seek to address" />
 				<button class="primary">go</button>
 			</form>
+			<!-- Same catalogue the desktop menu reads, laid out as a sheet.
+			     A command that does not apply right now is not drawn. -->
 			<div class="links">
-				{#if detail}
+				{#each commandsFor('sheet') as c (c.id)}
 					<button
+						disabled={c.busy?.()}
 						onclick={() => {
 							menu = false;
-							renameSymbol(session.project, session.addr, session.fn?.name ?? '');
-						}}>rename</button
+							c.run({ target: null });
+						}}
 					>
-				{/if}
-				<button
-					onclick={() => {
-						menu = false;
-						exporter.run(session.project, session.id);
-					}}>export project</button
-				>
+						{c.label({ target: null })}
+					</button>
+				{/each}
 				<a class="btn" href="/j/{session.id}">desktop ui</a>
 				<a class="btn" href="/mobile">jobs</a>
 			</div>
@@ -192,33 +190,21 @@
 	     function should land on the row you tapped, not at the top of a
 	     freshly refetched list. -->
 	<div class="m-body" class:m-hide={detail}>
-		<Chips tabs={browseTabs} bind:active={() => kind, (v) => (kind = v as Kind | 'info')} label="result lists" />
-		{#if kind === 'info'}
-			<InfoPanel />
-		{:else}
+		<Chips tabs={browseTabs} bind:active={kind} label="result lists" />
+		{#if list}
 			{#key kind}
-				<MobileList spec={LISTS[kind]} onpick={(a) => session.select(a)} />
+				<MobileList spec={list} onpick={(a) => session.select(a)} />
 			{/key}
+		{:else}
+			<InfoPanel />
 		{/if}
 	</div>
 
 	{#if detail}
 		<div class="m-body">
 			<Chips tabs={detailTabs} bind:active={() => view, setView} label="views" />
-			{#if view === 'disasm'}
-				<Disassembly />
-			{:else if view === 'graph'}
-				<FunctionGraph />
-			{:else if view === 'callgraph'}
-				<CallGraph />
-			{:else if view === 'decompiler'}
-				<Decompiler />
-			{:else if view === 'hex'}
-				<HexView />
-			{:else if view === 'details'}
-				<XrefsPanel />
-			{:else if view === 'info'}
-				<InfoPanel />
+			{#if View}
+				<View />
 			{:else}
 				<PluginPanel tab={view as CenterTab} />
 			{/if}

@@ -2,7 +2,8 @@
 	// The prototype prompt: Ghidra's "Edit Function Signature", reached over
 	// HTTP. Mounted once per route, opened through `signer`.
 	//
-	// It owns the `f` shortcut -- Ghidra's key for the same dialog -- which
+	// The `f` shortcut -- Ghidra's key for the same dialog -- now lives in
+	// `$lib/commands` with the other keys. What is left here is the dialog. It
 	// retypes the function you are looking at.
 	//
 	// Unlike the rename prompt this one blocks. ghidra-rest has to re-open the
@@ -13,6 +14,8 @@
 	import { signer } from '$lib/state/signature.svelte';
 	import { session } from '$lib/state/session.svelte';
 	import { displayAddr } from '$lib/format';
+	import { dismissable } from '$lib/actions/dismissable';
+	import Scrim from './Scrim.svelte';
 
 	let field = $state<HTMLInputElement | null>(null);
 	let elapsed = $state(0);
@@ -46,46 +49,16 @@
 		void signer.apply(ccDraft);
 	}
 
-	function typing(t: EventTarget | null) {
-		const el = t as HTMLElement | null;
-		if (!el) return false;
-		return (
-			el.tagName === 'INPUT' ||
-			el.tagName === 'TEXTAREA' ||
-			el.tagName === 'SELECT' ||
-			el.isContentEditable
-		);
-	}
-
-	function openHere() {
-		if (!session.id || !session.addr || !session.fn) return;
-		signer.open({
-			job: session.id,
-			addr: session.addr,
-			name: session.fn.name,
-			current: session.fn.signature ?? ''
-		});
-	}
-
-	function onKey(e: KeyboardEvent) {
-		if (signer.ask) {
-			if (e.key === 'Escape' && !signer.busy) signer.close();
-			return;
-		}
-		if (e.key !== 'f' || e.ctrlKey || e.metaKey || e.altKey || typing(e.target)) return;
-		if (!session.addr || !session.fn) return;
-		e.preventDefault();
-		openHere();
-	}
 </script>
 
-<svelte:window onkeydown={onKey} />
-
 {#if signer.ask}
-	<!-- svelte-ignore a11y_click_events_have_key_events -->
-	<!-- svelte-ignore a11y_no_static_element_interactions -->
-	<div class="scrim" onclick={() => signer.close()}></div>
-	<div class="box" role="dialog" aria-label="edit function signature">
+	<Scrim onclose={() => signer.close()} enabled={!signer.busy} />
+	<div
+		class="box"
+		role="dialog"
+		aria-label="edit function signature"
+		use:dismissable={{ onclose: () => signer.close(), outside: false, enabled: !signer.busy }}
+	>
 		<div class="what">
 			function signature
 			<span class="dim mono">{signer.ask.name} @ {displayAddr(signer.ask.addr)}</span>
@@ -162,12 +135,6 @@
 {/if}
 
 <style>
-	.scrim {
-		position: fixed;
-		inset: 0;
-		z-index: 90;
-		background: rgb(0 0 0 / 35%);
-	}
 	.box {
 		position: fixed;
 		z-index: 91;

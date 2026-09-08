@@ -162,6 +162,46 @@ export interface SignatureApplied {
 	duration_ms: number;
 }
 
+export interface PatchEntry {
+	address: string;
+	/** the bytes now at that address, contiguous lowercase hex */
+	bytes: string;
+	/** what the analyser saw there, and the only way back to it */
+	original: string;
+	/** entry point of the function the patch landed in, when it landed in one */
+	function?: string;
+	at?: string;
+}
+
+export interface PatchesResponse {
+	job: string;
+	/** false when this job kept no Ghidra project: nothing here can be patched */
+	editable: boolean;
+	count: number;
+	patch: PatchEntry[];
+}
+
+export interface PatchResult {
+	address: string;
+	ok: boolean;
+	/** the bytes that were there immediately before this apply */
+	before: string;
+	function?: string;
+	error?: string;
+}
+
+export interface PatchApplied {
+	job: string;
+	ok: boolean;
+	applied: number;
+	failed: number;
+	patch: PatchResult[];
+	/** functions whose disasm and decompilation the server just rewrote */
+	functions: string[];
+	duration_ms: number;
+	error?: string;
+}
+
 export interface Instruction {
 	address: string;
 	address_display?: string;

@@ -4,6 +4,8 @@
 	// the browser's downloads.
 	import { exporter } from '$lib/state/exporter.svelte';
 	import { fmtBytes } from '$lib/format';
+	import { dismissable } from '$lib/actions/dismissable';
+	import Scrim from './Scrim.svelte';
 
 	// Packing has no byte count to report: the server is building the zip, and
 	// on a project whose artifacts were never pulled it is fetching them from
@@ -20,10 +22,14 @@
 </script>
 
 {#if exporter.open}
-	<!-- svelte-ignore a11y_click_events_have_key_events -->
-	<!-- svelte-ignore a11y_no_static_element_interactions -->
-	<div class="scrim" onclick={() => exporter.dismiss()}></div>
-	<div class="box" role="alertdialog" aria-live="polite" aria-label="export">
+	<Scrim onclose={() => exporter.dismiss()} />
+	<div
+		class="box"
+		role="alertdialog"
+		aria-live="polite"
+		aria-label="export"
+		use:dismissable={{ onclose: () => exporter.dismiss(), outside: false }}
+	>
 		<div class="head">
 			{#if exporter.busy}<span class="spin" aria-hidden="true"></span>{/if}
 			<b>{head}</b>
@@ -65,12 +71,6 @@
 {/if}
 
 <style>
-	.scrim {
-		position: fixed;
-		inset: 0;
-		z-index: 90;
-		background: rgb(0 0 0 / 35%);
-	}
 	.box {
 		position: fixed;
 		z-index: 91;

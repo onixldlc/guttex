@@ -16,8 +16,10 @@
 // not decode are shown as data.
 //
 // What this does *not* fix is the decompiler, the graph and the call graph:
-// those are Ghidra's own output for the original bytes. Patch, export the
-// patched binary, analyse that if you need C back.
+// those are Ghidra's own output for the bytes Ghidra was given. To fix them,
+// give it the new ones -- `patcher.pushFunction` writes the patch into the
+// job's own Ghidra project and has it re-disassemble and re-decompile the one
+// function. That is a button, not something that happens behind you.
 
 import { store, type AsmLine } from '$lib/api/store';
 import type { Instruction } from '$lib/api/types';

@@ -7,12 +7,6 @@
 	import TitleBar from '$components/TitleBar.svelte';
 	import SideDock from '$components/SideDock.svelte';
 	import XrefsPanel from '$components/XrefsPanel.svelte';
-	import Disassembly from '$components/Disassembly.svelte';
-	import FunctionGraph from '$components/FunctionGraph.svelte';
-	import Decompiler from '$components/Decompiler.svelte';
-	import HexView from '$components/HexView.svelte';
-	import CallGraph from '$components/CallGraph.svelte';
-	import InfoPanel from '$components/InfoPanel.svelte';
 	import ConsolePanel from '$components/ConsolePanel.svelte';
 	import Progress from '$components/Progress.svelte';
 	import StatusBar from '$components/StatusBar.svelte';
@@ -30,6 +24,8 @@
 	import type { Tab } from '$components/tabs';
 	import { untrack } from 'svelte';
 	import { normAddr } from '$lib/format';
+	import { VIEWS, viewsFor } from '$lib/views';
+	import { runKey } from '$lib/commands';
 
 	let leftW = $state(340);
 	let rightW = $state(300);
@@ -38,6 +34,10 @@
 	$effect(() => {
 		const id = page.params.id;
 		if (!id) return;
+		// A job built from a commit holds patched bytes, so its own sha256 is not
+		// the project it belongs to. `?p=` carries the project that opened it, and
+		// everything keyed by project -- names, patches, history -- follows that.
+		session.projectOverride = (page.url.searchParams.get('p') ?? '').toLowerCase();
 		session.open(id);
 		// Renames live on the server, keyed by the binary's hash -- which
 		// only exists once the job has loaded, so sync watches for it.
@@ -71,15 +71,17 @@
 
 	// Plugin panels are tabs like any other, appended after the built-ins.
 	let tabs = $derived<Tab[]>([
-		{ id: 'disasm', label: 'disassembly' },
-		{ id: 'graph', label: 'graph' },
-		{ id: 'decompiler', label: 'decompiler' },
-		{ id: 'hex', label: 'hexdump' },
-		{ id: 'callgraph', label: 'call graph' },
-		{ id: 'info', label: 'info' },
+		...viewsFor('desktop').map((v) => ({ id: v.id, label: v.label })),
 		...plugins.panels.map((p) => ({ id: p.key, label: p.label }))
 	]);
+
+	// Anything the catalogue does not claim is a plugin panel.
+	let View = $derived(
+		VIEWS.find((v) => v.id === session.tab && v.at.desktop !== undefined)?.component
+	);
 </script>
+
+<svelte:window onkeydown={runKey} />
 
 <TitleBar />
 
@@ -97,18 +99,8 @@
 			<ActionsMenu />
 		</div>
 
-		{#if session.tab === 'disasm'}
-			<Disassembly />
-		{:else if session.tab === 'graph'}
-			<FunctionGraph />
-		{:else if session.tab === 'callgraph'}
-			<CallGraph />
-		{:else if session.tab === 'decompiler'}
-			<Decompiler />
-		{:else if session.tab === 'hex'}
-			<HexView />
-		{:else if session.tab === 'info'}
-			<InfoPanel />
+		{#if View}
+			<View />
 		{:else}
 			<PluginPanel tab={session.tab} />
 		{/if}

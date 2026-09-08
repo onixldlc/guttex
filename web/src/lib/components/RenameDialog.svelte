@@ -2,12 +2,14 @@
 	// The one rename prompt. Mounted once per route; everything that can be
 	// renamed opens it through `renamer`.
 	//
-	// It also owns the `n` shortcut, Cutter's, which renames the function you
-	// are looking at without having to find something to right-click.
+	// It used to own the `n` shortcut too, which made a global key a property of
+	// a component that is usually not mounted. The key is in `$lib/commands`
+	// now, with everything else that can be triggered without a pointer.
 	import { renamer } from '$lib/state/renamer.svelte';
 	import { renames } from '$lib/state/renames.svelte';
 	import { session } from '$lib/state/session.svelte';
-	import { renameSymbol } from '$lib/rename';
+	import { dismissable } from '$lib/actions/dismissable';
+	import Scrim from './Scrim.svelte';
 
 	let value = $state('');
 	let field = $state<HTMLInputElement | null>(null);
@@ -36,36 +38,16 @@
 		a.apply(a.original);
 	}
 
-	function typing(t: EventTarget | null) {
-		const el = t as HTMLElement | null;
-		if (!el) return false;
-		return (
-			el.tagName === 'INPUT' ||
-			el.tagName === 'TEXTAREA' ||
-			el.tagName === 'SELECT' ||
-			el.isContentEditable
-		);
-	}
-
-	function onKey(e: KeyboardEvent) {
-		if (renamer.ask) {
-			if (e.key === 'Escape') renamer.close();
-			return;
-		}
-		if (e.key !== 'n' || e.ctrlKey || e.metaKey || e.altKey || typing(e.target)) return;
-		if (!session.addr) return;
-		e.preventDefault();
-		renameSymbol(session.project, session.addr, session.fn?.name ?? '');
-	}
 </script>
 
-<svelte:window onkeydown={onKey} />
-
 {#if renamer.ask}
-	<!-- svelte-ignore a11y_click_events_have_key_events -->
-	<!-- svelte-ignore a11y_no_static_element_interactions -->
-	<div class="scrim" onclick={() => renamer.close()}></div>
-	<div class="box" role="dialog" aria-label="rename">
+	<Scrim onclose={() => renamer.close()} />
+	<div
+		class="box"
+		role="dialog"
+		aria-label="rename"
+		use:dismissable={{ onclose: () => renamer.close(), outside: false }}
+	>
 		<div class="what">{renamer.ask.what}</div>
 		<form onsubmit={submit}>
 			<input class="mono" bind:this={field} bind:value aria-label="new name" spellcheck="false" />
@@ -85,12 +67,6 @@
 {/if}
 
 <style>
-	.scrim {
-		position: fixed;
-		inset: 0;
-		z-index: 90;
-		background: rgb(0 0 0 / 35%);
-	}
 	.box {
 		position: fixed;
 		z-index: 91;

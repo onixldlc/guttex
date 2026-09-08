@@ -85,6 +85,10 @@ export type Meta = {
 	patches?: number;
 	archived?: boolean;
 	archive_bytes?: number;
+	/** how many commits the project\'s history holds */
+	commits?: number;
+	/** the branch the project is currently on */
+	branch?: string;
 };
 
 export class NotFound extends Error {}
@@ -302,6 +306,30 @@ export function livePatches(a: Annotations): { addr: string; bytes: string }[] {
 		.filter(([, e]) => typeof e?.changes === 'string' && e.changes !== '')
 		.map(([addr, e]) => ({ addr, bytes: e.changes }))
 		.sort((x, y) => (x.addr.padStart(16, '0') < y.addr.padStart(16, '0') ? -1 : 1));
+}
+
+/**
+ * Merge a few fields into meta.json.
+ *
+ * For writers that own a different file in the same folder -- the history, so
+ * far -- and need the project card to say so without reaching into this
+ * module\'s idea of what a write is.
+ */
+export function patchMeta(id: string, fields: Partial<Meta>): Promise<void> {
+	return locked(async () => {
+		await mkdir(dir(id), { recursive: true });
+		const m = (await readJSON<Meta>(join(dir(id), META))) ?? {
+			id,
+			name: id,
+			created_at: now(),
+			updated_at: now(),
+			rev: 0,
+			renames: 0
+		};
+		Object.assign(m, fields);
+		m.updated_at = now();
+		await writeJSON(join(dir(id), META), m);
+	});
 }
 
 export function remove(id: string): Promise<void> {

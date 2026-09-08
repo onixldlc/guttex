@@ -62,8 +62,13 @@ class Exporter {
 		return this.#go(store.exportUrl(id, job), `guttex-${id.slice(0, 12)}.zip`);
 	}
 
-	/** the binary itself, as submitted or with the patches applied */
-	runBinary(id: string, variant: 'original' | 'patched', job?: string, base?: string) {
+	/** the binary itself: as submitted, or with the project's patches applied */
+	runBinary(
+		id: string,
+		variant: 'original' | 'patched',
+		job?: string,
+		base?: string
+	) {
 		if (!id) return;
 		return this.#go(store.binaryUrl(id, variant, job, base), `${id.slice(0, 12)}.bin`);
 	}
